@@ -659,6 +659,7 @@ function renderListaTickets() {
         : `<table>
         <thead>
           <tr>
+            ${thSort('criado_em','Abertura')}
             ${thSort('numero_ticket','Nº')}
             ${thSort('tipo_nome','Tipo')}
             ${thSort('cliente','Cliente / NF')}
@@ -680,6 +681,7 @@ function renderListaTickets() {
               ? new Date(t.proximo_followup+'T00:00:00').toLocaleDateString('pt-BR') : '—';
             const proxFwVencido = t.proximo_followup && new Date(t.proximo_followup) < new Date();
             return `<tr onclick="abrirDrawerTicket(${t.id})" style="cursor:pointer;${t.concluido?'opacity:.5;':''}">
+              <td style="font-size:.75rem;color:var(--text2);white-space:nowrap">${t.criado_em ? new Date(t.criado_em).toLocaleDateString('pt-BR') : '—'}</td>
               <td><span style="font-weight:600;color:var(--primary)">${t.numero_ticket||'—'}</span></td>
               <td><span style="color:${t.tipo_cor||'#6b7280'}">${t.tipo_icone||''} ${t.tipo_nome||'—'}</span></td>
               <td>
@@ -765,7 +767,7 @@ async function abrirDrawerTicket(id) {
   document.getElementById('drawer-body').innerHTML = `
     <div class="tabs">
       <button class="tab-btn active" onclick="abaTicket('detalhes',this)">Detalhes</button>
-      <button class="tab-btn" onclick="abaTicket('followup',this)">Follow-up (${followups?.length||0})</button>
+
       <button class="tab-btn" onclick="abaTicket('editar',this)">Editar</button>
     </div>
 
@@ -794,6 +796,7 @@ async function abrirDrawerTicket(id) {
 
       <!-- Grid detalhes -->
       <div class="detail-grid">
+        <div class="detail-item"><div class="detail-label">Abertura</div><div class="detail-val">${t.criado_em ? new Date(t.criado_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'}</div></div>
         <div class="detail-item"><div class="detail-label">Tipo</div><div class="detail-val">${t.tipo_icone||''} ${t.tipo_nome||'—'}</div></div>
         <div class="detail-item"><div class="detail-label">Responsável</div><div class="detail-val">${t.responsavel_nome||'—'}</div></div>
         <div class="detail-item"><div class="detail-label">Cliente</div><div class="detail-val" style="font-weight:500">${t.cliente||'—'}</div></div>
@@ -813,31 +816,31 @@ async function abrirDrawerTicket(id) {
 
       <!-- Rastreio automático -->
       <div class="field-label" style="margin-bottom:.4rem">🛰 Último Rastreio (sistema)</div>
-      <div id="rastreio-box-${t.id}">${rastreioHtml}</div>
-    </div>
+      <div id="rastreio-box-${t.id}" style="margin-bottom:1.25rem">${rastreioHtml}</div>
 
-    <!-- ABA FOLLOW-UP -->
-    <div class="tab-panel" id="tab-followup">
-      <div style="margin-bottom:.75rem">
-        <div class="field-label">Templates rápidos</div>
-        <div class="templates-row">${tplPills||'<span style="font-size:.75rem;color:var(--text2)">Nenhum template</span>'}</div>
+      <!-- Follow-up inline -->
+      <hr style="border:none;border-top:1px solid var(--border);margin-bottom:1.25rem">
+      <div class="field-label" style="font-size:.8rem;margin-bottom:.5rem">💬 NOVO FOLLOW-UP</div>
+      <div class="templates-row" style="margin-bottom:.6rem">${tplPills||''}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-bottom:.6rem">
+        <div>
+          <label class="field-label">Tipo</label>
+          <select class="field-select" id="fw-tipo">${optTipoFw}</select>
+        </div>
+        <div>
+          <label class="field-label">Próximo follow-up</label>
+          <input type="date" class="field-input" id="fw-proximo" value="${t.proximo_followup||''}">
+        </div>
       </div>
-      <div class="field-full">
-        <label class="field-label">Tipo</label>
-        <select class="field-select" id="fw-tipo">${optTipoFw}</select>
-      </div>
-      <div class="field-full">
-        <label class="field-label">Texto *</label>
-        <textarea class="field-textarea" id="fw-texto" placeholder="Descreva o acompanhamento..."></textarea>
-      </div>
-      <div class="field-full">
-        <label class="field-label">Próximo follow-up</label>
-        <input type="date" class="field-input" id="fw-proximo" value="${t.proximo_followup||''}">
-      </div>
+      <textarea class="field-textarea" id="fw-texto" placeholder="Descreva o acompanhamento..." style="margin-bottom:.6rem"></textarea>
       <button class="btn btn-primary btn-sm" onclick="salvarFollowup(${t.id})">Salvar Follow-up</button>
-      <hr style="border:none;border-top:1px solid var(--border);margin:1.25rem 0">
+
+      <!-- Histórico -->
+      <div class="field-label" style="margin:.1rem 0 .5rem">📋 HISTÓRICO (${followups?.length||0})</div>
       <div class="followup-list" id="followup-list">${fwHtml}</div>
     </div>
+
+
 
     <!-- ABA EDITAR -->
     <div class="tab-panel" id="tab-editar">
