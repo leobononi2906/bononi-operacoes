@@ -1584,8 +1584,8 @@ function abrirStatusPopup(e, ticketId) {
   popup.className = 'status-popup';
   popup.id = 'status-popup-' + ticketId;
   popup.style.cssText = `top:${rect.bottom + window.scrollY + 4}px;left:${rect.left + window.scrollX}px;`;
-  popup.innerHTML = _status.map(s => `
-    <div class="status-popup-item" onclick="alterarStatusInline(${ticketId},${s.id},${i})"\'")}','${s.cor}')">
+  popup.innerHTML = _status.map((s,i) => `
+    <div class="status-popup-item" onclick="alterarStatusInline(${ticketId},${s.id},${i})">
       <span class="status-popup-dot" style="background:${s.cor}"></span>
       ${s.nome}
     </div>`).join('');
