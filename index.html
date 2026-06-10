@@ -1090,412 +1090,216 @@ async function salvarNovoTicket() {
 // PÁGINA: AUDITORIA DE FRETE
 // ============================================================
 async function renderAuditoria() {
-  document.getElementById('topbar-actions').innerHTML =
-    `<button class="btn btn-outline btn-sm" onclick="renderAtrasos()">📋 Ver Atrasos</button>
-     <button class="btn btn-primary btn-sm" onclick="renderAuditoria()">🔍 Auditoria Frete</button>`;
+  document.getElementById('topbar-actions').innerHTML = '';
+  document.getElementById('main-content').innerHTML =
+    '<div class="loading"><span class="spinner"></span> Carregando auditoria...</div>';
 
-  document.getElementById('main-content').innerHTML = `<div class="loading"><span class="spinner"></span> Carregando auditoria...</div>`;
-  const minDiv = parseFloat(_configs['auditoria_divergencia_min']||50);
+  const minDiv = parseFloat(_configs['auditoria_divergencia_min'] || 50);
+  const dados  = await supa('ops_auditoria_frete', `divergencia=gte.${minDiv}&order=divergencia.desc`);
+  window._dadosAuditoria = dados || [];
 
-  // Usa a view ops_auditoria_frete e filtra no cliente pelo valor mínimo
-  const dados = await supa('ops_auditoria_frete', `divergencia=gte.${minDiv}&order=divergencia.desc`);
-
-  if (!dados || dados.length===0) {
-    document.getElementById('main-content').innerHTML = `
-      <div class="empty-state">
-        <div class="empty-icon">✅</div>
-        <p>Nenhuma divergência acima de R$ ${minDiv.toFixed(2)} encontrada.</p>
-      </div>`;
+  if (!dados || dados.length === 0) {
+    document.getElementById('main-content').innerHTML =
+      `<div class="empty-state"><div class="empty-icon">✅</div>
+       <p>Nenhuma divergência acima de R$ ${minDiv.toFixed(2)}.</p>
+       <p style="margin-top:.5rem"><a href="#" onclick="navegar('config')" style="color:var(--primary)">Alterar valor mínimo em Configurações</a></p>
+       </div>`;
     return;
   }
 
-  const totalDiv = dados.reduce((s,d)=>s+parseFloat(d.divergencia||0),0);
+  const totalDiv = dados.reduce((s, d) => s + parseFloat(d.divergencia || 0), 0);
+  const pendentes   = dados.filter(d => d.status_auditoria === 'pendente').length;
+  const divergentes = dados.filter(d => d.status_auditoria === 'divergencia').length;
+  const contestados = dados.filter(d => d.status_auditoria === 'contestado').length;
+
+  const statusCores = {
+    pendente:    { bg: 'rgba(245,158,11,.15)',  cor: '#fbbf24' },
+    divergencia: { bg: 'rgba(239,68,68,.15)',   cor: '#f87171' },
+    contestado:  { bg: 'rgba(139,92,246,.15)',  cor: '#a78bfa' },
+    sem_vinculo: { bg: 'rgba(107,114,128,.15)', cor: '#9ca3af' },
+  };
 
   document.getElementById('main-content').innerHTML = `
     <div class="kpi-grid" style="margin-bottom:1rem">
-      <div class="kpi-card"><div class="kpi-label">Divergências</div><div class="kpi-value" style="color:var(--danger)">${dados.length}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Total em Divergência</div><div class="kpi-value" style="color:var(--warning);font-size:1.3rem">R$ ${totalDiv.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Filtro mínimo</div><div class="kpi-value" style="font-size:1.3rem">R$ ${minDiv.toFixed(2)}</div>
-        <div class="kpi-sub"><a href="#" onclick="navegar('config')" style="color:var(--primary)">Alterar em Config</a></div>
-      </div>
+      <div class="kpi-card"><div class="kpi-label">Divergências</div>
+        <div class="kpi-value" style="color:var(--danger)">${dados.length}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Total R$</div>
+        <div class="kpi-value" style="color:var(--warning);font-size:1.2rem">
+          R$ ${totalDiv.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Pendentes</div>
+        <div class="kpi-value" style="color:#fbbf24">${pendentes}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Contestados</div>
+        <div class="kpi-value" style="color:#a78bfa">${contestados}</div></div>
     </div>
     <div class="table-wrapper">
       <div class="table-header">
-        <h3>Divergências de Frete (${dados.length})</h3>
+        <h3>Auditoria de Frete (${dados.length})</h3>
         <div class="filters">
-          <input class="filter-input" id="filt-auditoria" placeholder="Buscar transportadora / destinatário..." oninput="filtrarAuditoria(this.value)">
+          <input class="filter-input" id="filt-aud" placeholder="Buscar transp. / destinatário / NF..."
+            oninput="filtrarAuditoria(this.value)" style="min-width:220px">
+          <select class="filter-input" id="filt-aud-status" onchange="filtrarAuditoria(document.getElementById('filt-aud').value)">
+            <option value="">Todos os status</option>
+            <option value="pendente">Pendente</option>
+            <option value="divergencia">Divergência</option>
+            <option value="contestado">Contestado</option>
+            <option value="sem_vinculo">Sem vínculo</option>
+          </select>
         </div>
       </div>
       <table>
         <thead>
           <tr>
-            <th>CTe</th><th>Data</th><th>Transportadora</th>
-            <th>Destinatário</th><th>Destino</th>
-            <th>Valor NF</th><th>Valor CTe</th><th>Divergência</th><th>Ação</th>
+            <th>N° CTe</th><th>Data</th><th>Transportadora</th>
+            <th>Destinatário</th><th>UF</th><th>NF</th>
+            <th>Valor Produtos</th><th>Valor CTe</th><th>Valor NF</th>
+            <th>Divergência</th><th>Status</th><th>Vendedor</th>
           </tr>
         </thead>
         <tbody id="tbody-auditoria">
-          ${renderLinhasAuditoria(dados)}
+          ${renderLinhasAuditoria(dados, statusCores)}
         </tbody>
       </table>
     </div>`;
-  window._dadosAuditoria = dados;
+  window._statusCoresAuditoria = statusCores;
 }
 
-function renderLinhasAuditoria(dados) {
-  return dados.map(d=>`
-    <tr>
-      <td style="font-family:monospace;font-size:.78rem">${d.num_cte||'—'}</td>
-      <td>${d.data_emissao?new Date(d.data_emissao+'T00:00:00').toLocaleDateString('pt-BR'):'—'}</td>
+function renderLinhasAuditoria(dados, statusCores) {
+  const sc = statusCores || window._statusCoresAuditoria || {};
+  return dados.map(d => {
+    const nf   = d.num_nf || (d.notas_fiscais ? (d.notas_fiscais[0]?.num_nf || '—') : '—');
+    const cor  = (sc[d.status_auditoria] || {}).cor || '#9ca3af';
+    const bg   = (sc[d.status_auditoria] || {}).bg  || 'rgba(107,114,128,.1)';
+    const div  = parseFloat(d.divergencia || 0);
+    return `<tr class="clickable" onclick="abrirDrawerAuditoria(${d.id})">
+      <td style="font-family:monospace;font-weight:600;color:var(--primary)">${d.num_cte || '—'}</td>
+      <td style="white-space:nowrap">${d.data_emissao ? new Date(d.data_emissao+'T00:00:00').toLocaleDateString('pt-BR') : '—'}</td>
       <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.nome_transportadora||''}">${d.nome_transportadora||'—'}</td>
-      <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.nome_destinatario||''}">${d.nome_destinatario||'—'}</td>
-      <td>${d.cidade_destino||''} ${d.uf_destino||''}</td>
-      <td>R$ ${(d.valor_frete_nf||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
-      <td>R$ ${(d.valor_frete_cte||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
-      <td class="divergencia-positiva">+R$ ${parseFloat(d.divergencia||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
-      <td><button class="btn btn-outline btn-sm" onclick="abrirTicketDeAuditoria(${JSON.stringify(d).replace(/"/g,'&quot;')})">🎫 Ticket</button></td>
-    </tr>`).join('');
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.nome_destinatario||''}">${d.nome_destinatario||'—'}</td>
+      <td>${d.uf_destino||'—'}</td>
+      <td style="font-family:monospace">${nf}</td>
+      <td>R$ ${(parseFloat(d.valor_mercadoria||0)).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
+      <td>R$ ${(parseFloat(d.valor_frete_cte||0)).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
+      <td>R$ ${(parseFloat(d.valor_frete_nf||0)).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
+      <td style="font-weight:700;color:${div>0?'var(--danger)':'var(--success)'}">
+        ${div>0?'+':''}R$ ${Math.abs(div).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
+      <td><span class="badge" style="background:${bg};color:${cor}">${d.status_auditoria||'—'}</span></td>
+      <td style="font-size:.75rem;color:var(--text2)">${d.nome_vendedor||'—'}</td>
+    </tr>`;
+  }).join('');
 }
 
 function filtrarAuditoria(q) {
-  const dados = (window._dadosAuditoria||[]).filter(d =>
-    !q || (d.nome_transportadora+d.nome_destinatario).toLowerCase().includes(q.toLowerCase()));
-  document.getElementById('tbody-auditoria').innerHTML = renderLinhasAuditoria(dados);
+  const statusF = document.getElementById('filt-aud-status')?.value || '';
+  let lista = window._dadosAuditoria || [];
+  if (q) lista = lista.filter(d =>
+    (d.nome_transportadora+d.nome_destinatario+(d.num_nf||'')).toLowerCase().includes(q.toLowerCase()));
+  if (statusF) lista = lista.filter(d => d.status_auditoria === statusF);
+  document.getElementById('tbody-auditoria').innerHTML = renderLinhasAuditoria(lista);
 }
 
-function abrirTicketDeAuditoria(idOuObj) {
-  var d = typeof idOuObj === 'number'
-    ? (window._dadosAuditoria || []).find(function(x){return x.id == idOuObj;})
-    : idOuObj;
+async function abrirDrawerAuditoria(id) {
+  const d = (window._dadosAuditoria || []).find(x => x.id === id);
   if (!d) return;
-  // Pré-preenche novo ticket com dados da divergência
-  abrirNovoTicket();
-  setTimeout(()=>{
-    // Seleciona tipo "Entrega Atrasada" — mais próximo de auditoria
-    const tipoDiv = _tipos.find(t=>t.nome.includes('Outros'));
-    if (tipoDiv) document.getElementById('nt-tipo').value = tipoDiv.id;
-    document.getElementById('nt-cliente').value   = d.nome_destinatario||'';
-    document.getElementById('nt-rastreio').value  = d.num_cte||'';
-    document.getElementById('nt-obs').value       = `Divergência de frete CTe ${d.num_cte}: cobrado R$ ${parseFloat(d.valor_frete_cte||0).toFixed(2)} vs NF R$ ${parseFloat(d.valor_frete_nf||0).toFixed(2)} (diferença +R$ ${parseFloat(d.divergencia||0).toFixed(2)})`;
-    // Seleciona transportadora
-    const tr = _transportadoras.find(t=>d.nome_transportadora?.toUpperCase().includes(t.nome.toUpperCase().split(' ')[0]));
-    if (tr) document.getElementById('nt-transp').value = tr.id;
-    document.getElementById('nt-origem').value    = 'frt_conhecimentos';
-    document.getElementById('nt-origem-id').value = d.id||'';
-  }, 100);
-}
 
-// ============================================================
-// PÁGINA: CONFIGURAÇÕES
-// ============================================================
-function renderConfig() {
-  document.getElementById('main-content').innerHTML = `
-    <div class="tabs">
-      <button class="tab-btn active" onclick="abaConfig('geral',this)">Geral</button>
-      <button class="tab-btn" onclick="abaConfig('tipos',this)">Tipos</button>
-      <button class="tab-btn" onclick="abaConfig('status',this)">Status</button>
-      <button class="tab-btn" onclick="abaConfig('prios',this)">Prioridades</button>
-      <button class="tab-btn" onclick="abaConfig('transp',this)">Transportadoras</button>
-      <button class="tab-btn" onclick="abaConfig('sla',this)">SLA</button>
-      <button class="tab-btn" onclick="abaConfig('templates',this)">Templates</button>
+  const nf = d.num_nf || (d.notas_fiscais ? (d.notas_fiscais[0]?.num_nf || '—') : '—');
+  const div = parseFloat(d.divergencia || 0);
+
+  document.getElementById('drawer-title').textContent = 'CTe ' + (d.num_cte || id);
+  document.getElementById('drawer-overlay').classList.add('open');
+
+  const statusOpts = ['pendente','divergencia','contestado','sem_vinculo','ok'].map(s =>
+    `<option value="${s}" ${d.status_auditoria===s?'selected':''}>${s}</option>`).join('');
+
+  document.getElementById('drawer-body').innerHTML = `
+    <!-- Status atual + ações rápidas -->
+    <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem;flex-wrap:wrap">
+      <div>
+        <div class="field-label" style="margin-bottom:.3rem">Status atual</div>
+        <select class="inline-select" id="aud-status-sel">
+          ${statusOpts}
+        </select>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:.5rem;flex-wrap:wrap">
+        <button class="btn btn-success btn-sm" onclick="salvarAuditoria(${d.id},'ok')">✅ Confirmar OK</button>
+        <button class="btn btn-danger btn-sm"  onclick="salvarAuditoria(${d.id},'divergencia')">⚠️ Marcar Divergência</button>
+        <button class="btn btn-outline btn-sm" onclick="salvarAuditoria(${d.id},'contestado')">🛡 Contestar</button>
+      </div>
     </div>
-    <div id="config-content"><div class="loading"><span class="spinner"></span></div></div>`;
-  renderConfigGeral();
-}
 
-function abaConfig(aba, btn) {
-  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-  if (aba==='geral')     renderConfigGeral();
-  if (aba==='tipos')     renderConfigLista('ops_tipos',_tipos,'Tipos de Ticket',['nome','cor','icone']);
-  if (aba==='status')    renderConfigStatus();
-  if (aba==='prios')     renderConfigLista('ops_prioridades',_prioridades,'Prioridades',['nome','cor']);
-  if (aba==='transp')    renderConfigTransp();
-  if (aba==='sla')       renderConfigSLA();
-  if (aba==='templates') renderConfigTemplates();
-}
+    <!-- Grid de dados -->
+    <div class="detail-grid" style="margin-bottom:1.25rem">
+      <div class="detail-item"><div class="detail-label">N° CTe</div>
+        <div class="detail-val" style="font-family:monospace;font-weight:600">${d.num_cte||'—'}</div></div>
+      <div class="detail-item"><div class="detail-label">Data Emissão</div>
+        <div class="detail-val">${d.data_emissao?new Date(d.data_emissao+'T00:00:00').toLocaleDateString('pt-BR'):'—'}</div></div>
+      <div class="detail-item"><div class="detail-label">Transportadora</div>
+        <div class="detail-val">${d.nome_transportadora||'—'}</div></div>
+      <div class="detail-item"><div class="detail-label">NF</div>
+        <div class="detail-val" style="font-family:monospace">${nf}</div></div>
+      <div class="detail-item"><div class="detail-label">Destinatário</div>
+        <div class="detail-val">${d.nome_destinatario||'—'}</div></div>
+      <div class="detail-item"><div class="detail-label">Destino</div>
+        <div class="detail-val">${d.cidade_destino||''} ${d.uf_destino||''}</div></div>
+      <div class="detail-item"><div class="detail-label">Valor Produtos</div>
+        <div class="detail-val">R$ ${parseFloat(d.valor_mercadoria||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>
+      <div class="detail-item"><div class="detail-label">Peso</div>
+        <div class="detail-val">${d.peso_kg?parseFloat(d.peso_kg).toFixed(2)+' kg':'—'}</div></div>
+    </div>
 
-function renderConfigGeral() {
-  const cfgs = [
-    {chave:'dias_atraso_entrega',label:'Dias para ticket de atraso',desc:'NFs com mais de X dias sem entrega'},
-    {chave:'auditoria_divergencia_min',label:'Divergência mínima (R$)',desc:'Valor mínimo para aparecer na auditoria'},
-    {chave:'auto_ticket_portal',label:'Auto-ticket portal',desc:'Criar ticket ao incluir pedido no portal'},
-    {chave:'auto_ticket_atraso_entrega',label:'Auto-ticket atraso',desc:'Criar ticket para entregas atrasadas'},
-  ];
-  document.getElementById('config-content').innerHTML = `
-    <div class="config-card" style="max-width:600px">
-      <h4>⚙️ Configurações Gerais</h4>
-      ${cfgs.map(c=>`
-      <div class="config-row">
-        <div><div class="config-row-label">${c.label}</div><div class="config-row-sub">${c.desc}</div></div>
-        <div class="config-row-actions">
-          <input type="text" class="filter-input" style="width:120px" id="cfg-${c.chave}" value="${_configs[c.chave]||''}">
-          <button class="btn btn-outline btn-sm" onclick="salvarConfig('${c.chave}')">Salvar</button>
-        </div>
-      </div>`).join('')}
+    <!-- Valores frete -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:1rem;margin-bottom:1.25rem">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;text-align:center">
+        <div><div class="field-label">Valor NF</div>
+          <div style="font-size:1.1rem;font-weight:600">R$ ${parseFloat(d.valor_frete_nf||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>
+        <div><div class="field-label">Valor CTe</div>
+          <div style="font-size:1.1rem;font-weight:600">R$ ${parseFloat(d.valor_frete_cte||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>
+        <div><div class="field-label">Divergência</div>
+          <div style="font-size:1.2rem;font-weight:700;color:${div>0?'var(--danger)':'var(--success)'}">
+            ${div>0?'+':''}R$ ${Math.abs(div).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>
+      </div>
+      ${(d.valor_pedagio||d.valor_gris||d.valor_adicionais) ? `
+      <hr style="border:none;border-top:1px solid var(--border);margin:.75rem 0">
+      <div style="display:flex;gap:1.5rem;font-size:.78rem;color:var(--text2);justify-content:center">
+        ${d.valor_pedagio  ? `<span>Pedágio: R$ ${parseFloat(d.valor_pedagio).toFixed(2)}</span>` : ''}
+        ${d.valor_gris     ? `<span>GRIS: R$ ${parseFloat(d.valor_gris).toFixed(2)}</span>` : ''}
+        ${d.valor_adicionais ? `<span>Adicionais: R$ ${parseFloat(d.valor_adicionais).toFixed(2)}</span>` : ''}
+      </div>` : ''}
+    </div>
+
+    <!-- Observação -->
+    <div class="field-full">
+      <label class="field-label">Observação</label>
+      <textarea class="field-textarea" id="aud-obs" placeholder="Notas sobre esta auditoria...">${d.observacao_auditoria||''}</textarea>
     </div>`;
+
+  document.getElementById('drawer-footer').innerHTML =
+    `<button class="btn btn-outline btn-sm" onclick="fecharDrawerDireto()">Fechar</button>
+     <button class="btn btn-primary btn-sm" onclick="salvarAuditoria(${d.id}, document.getElementById('aud-status-sel').value)">Salvar</button>`;
 }
 
-async function salvarConfig(chave) {
-  const val = document.getElementById('cfg-'+chave).value;
+async function salvarAuditoria(id, status) {
+  const obs = document.getElementById('aud-obs')?.value || '';
   try {
-    await fetch(`${SUPA_URL}/rest/v1/ops_configuracoes?chave=eq.${chave}`, {
-      method:'PATCH', headers:{'Content-Type':'application/json',apikey:SUPA_KEY,Authorization:'Bearer '+(currentSession?.access_token||SUPA_KEY)},
-      body: JSON.stringify({valor:val, atualizado_em: new Date().toISOString()})
+    await fetch(`${SUPA_URL}/rest/v1/frt_conhecimentos?id=eq.${id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json', apikey: SUPA_KEY,
+        Authorization: 'Bearer ' + (currentSession?.access_token || SUPA_KEY)
+      },
+      body: JSON.stringify({ status_auditoria: status, observacao_auditoria: obs })
     });
-    _configs[chave] = val;
-    toast('Configuração salva!','success');
-  } catch(e) { toast('Erro: '+e.message,'error'); }
-}
-
-function renderConfigStatus() {
-  document.getElementById('config-content').innerHTML = `
-    <div class="config-card" style="max-width:600px">
-      <h4>🔵 Status dos Tickets</h4>
-      <div id="status-lista">${renderStatusLista()}</div>
-      <div class="add-row">
-        <input type="text" class="field-input" id="new-status-nome" placeholder="Nome do status">
-        <input type="text" class="field-input" style="width:90px" id="new-status-cor" placeholder="#cor" value="#6b7280">
-        <input type="checkbox" id="new-status-finaliza" title="Finaliza ticket?">
-        <label style="font-size:.75rem;color:var(--text2);white-space:nowrap" title="Marque se este status finaliza o ticket">Finaliza</label>
-        <button class="btn btn-primary btn-sm" onclick="adicionarStatus()">+ Add</button>
-      </div>
-    </div>`;
-}
-
-function renderStatusLista() {
-  return _status.map(s=>`
-    <div class="config-row">
-      <div style="display:flex;align-items:center;gap:.5rem">
-        <span style="width:12px;height:12px;border-radius:50%;background:${s.cor};display:inline-block"></span>
-        <span>${s.nome}</span>
-        ${s.finaliza_ticket?'<span style="font-size:.68rem;background:rgba(16,185,129,.15);color:#34d399;padding:.1rem .4rem;border-radius:20px">finaliza</span>':''}
-      </div>
-      <div class="config-row-actions">
-        <button class="btn btn-outline btn-sm" onclick="toggleAtivo('ops_status',${s.id},${s.ativo},'status')">${s.ativo?'🚫 Desativar':'✅ Ativar'}</button>
-      </div>
-    </div>`).join('');
-}
-
-async function adicionarStatus() {
-  const nome = document.getElementById('new-status-nome').value.trim();
-  const cor  = document.getElementById('new-status-cor').value.trim()||'#6b7280';
-  const fin  = document.getElementById('new-status-finaliza').checked;
-  if (!nome) return;
-  try {
-    await supaPost('ops_status',{nome,cor,finaliza_ticket:fin,ordem:_status.length+1});
-    await carregarLookups();
-    renderConfigStatus();
-    toast('Status adicionado!','success');
-  } catch(e) { toast('Erro: '+e.message,'error'); }
-}
-
-function renderConfigLista(tabela, lista, titulo, campos) {
-  document.getElementById('config-content').innerHTML = `
-    <div class="config-card" style="max-width:600px">
-      <h4>${titulo}</h4>
-      ${lista.map(item=>`
-      <div class="config-row">
-        <div>${item.icone?item.icone+' ':''}<span style="color:${item.cor||'inherit'}">${item.nome}</span></div>
-        <button class="btn btn-outline btn-sm" onclick="toggleAtivo('${tabela}',${item.id},${item.ativo},'${tabela.replace('ops_','')}')">
-          ${item.ativo?'🚫 Desativar':'✅ Ativar'}
-        </button>
-      </div>`).join('')}
-      <div class="add-row">
-        ${campos.map(c=>`<input type="text" class="field-input" id="new-${tabela}-${c}" placeholder="${c}">`).join('')}
-        <button class="btn btn-primary btn-sm" onclick="adicionarItem('${tabela}',['${campos.join("','")}'])">+ Add</button>
-      </div>
-    </div>`;
-}
-
-async function adicionarItem(tabela, campos) {
-  const body = {};
-  campos.forEach(c => { body[c] = document.getElementById('new-'+tabela+'-'+c)?.value.trim()||null; });
-  if (!body.nome) return;
-  try {
-    await supaPost(tabela, body);
-    await carregarLookups();
-    const map = {'ops_tipos':'tipos','ops_prioridades':'prios'};
-    toast('Item adicionado!','success');
-    renderConfigLista(tabela, tabela==='ops_tipos'?_tipos:_prioridades, tabela==='ops_tipos'?'Tipos de Ticket':'Prioridades', campos);
-  } catch(e) { toast('Erro: '+e.message,'error'); }
-}
-
-async function toggleAtivo(tabela, id, ativo, tipo) {
-  try {
-    await supaPatch(tabela, id, {ativo: !ativo});
-    await carregarLookups();
-    if (tipo==='status') renderConfigStatus();
-    toast((ativo?'Desativado':'Ativado')+'!','success');
-  } catch(e) { toast('Erro: '+e.message,'error'); }
-}
-
-function renderConfigTransp() {
-  document.getElementById('config-content').innerHTML = `
-    <div class="config-card" style="max-width:700px">
-      <h4>🚚 Transportadoras</h4>
-      ${_transportadoras.map(t=>`
-      <div class="config-row">
-        <div>
-          <div class="config-row-label">${t.nome}</div>
-          <div class="config-row-sub">${t.contato_nome||'—'} ${t.contato_telefone?'· '+t.contato_telefone:''}</div>
-        </div>
-        <button class="btn btn-outline btn-sm" onclick="editarTransp(${t.id})">✏️ Editar</button>
-      </div>`).join('')}
-      <div class="add-row" style="margin-top:1rem">
-        <input type="text" class="field-input" id="new-transp-nome" placeholder="Nome">
-        <input type="text" class="field-input" id="new-transp-contato_nome" placeholder="Contato">
-        <input type="text" class="field-input" id="new-transp-contato_telefone" placeholder="Telefone">
-        <button class="btn btn-primary btn-sm" onclick="adicionarTransp()">+ Add</button>
-      </div>
-    </div>`;
-}
-
-async function adicionarTransp() {
-  const nome = document.getElementById('new-transp-nome').value.trim();
-  if (!nome) return;
-  try {
-    await supaPost('ops_transportadoras',{
-      nome, contato_nome: document.getElementById('new-transp-contato_nome').value.trim()||null,
-      contato_telefone: document.getElementById('new-transp-contato_telefone').value.trim()||null
-    });
-    await carregarLookups();
-    renderConfigTransp();
-    toast('Transportadora adicionada!','success');
-  } catch(e) { toast('Erro: '+e.message,'error'); }
-}
-
-async function editarTransp(id) {
-  const t = _transportadoras.find(x=>x.id==id);
-  if (!t) return;
-  const nome  = prompt('Nome:', t.nome); if (!nome) return;
-  const cont  = prompt('Contato:', t.contato_nome||'');
-  const tel   = prompt('Telefone:', t.contato_telefone||'');
-  try {
-    await supaPatch('ops_transportadoras', id, {nome, contato_nome:cont||null, contato_telefone:tel||null});
-    await carregarLookups();
-    renderConfigTransp();
-    toast('Transportadora atualizada!','success');
-  } catch(e) { toast('Erro: '+e.message,'error'); }
-}
-
-function renderConfigSLA() {
-  document.getElementById('config-content').innerHTML = `
-    <div class="config-card" style="max-width:600px">
-      <h4>⏱ SLA por Tipo de Ticket</h4>
-      ${_tipos.map(tipo=>{
-        const sla = _configs['sla_'+tipo.id] || null;
-        return `
-        <div class="config-row">
-          <div><div class="config-row-label">${tipo.icone||''} ${tipo.nome}</div></div>
-          <div class="config-row-actions">
-            <span style="font-size:.75rem;color:var(--text2)">SLA:</span>
-            <input type="number" class="filter-input" style="width:70px" id="sla-h-${tipo.id}" 
-              value="${getSlaHoras(tipo.id)}" title="Horas SLA">h
-            <span style="font-size:.75rem;color:var(--text2)">Alerta:</span>
-            <input type="number" class="filter-input" style="width:70px" id="sla-a-${tipo.id}"
-              value="${getSlaAlerta(tipo.id)}" title="Horas para alerta">h
-            <button class="btn btn-outline btn-sm" onclick="salvarSLA(${tipo.id})">Salvar</button>
-          </div>
-        </div>`}).join('')}
-    </div>`;
-}
-
-function getSlaHoras(tipoId) {
-  // busca no banco via _templates não vai ter — precisaria de outro cache
-  return '';
-}
-function getSlaAlerta(tipoId) { return ''; }
-
-async function salvarSLA(tipoId) {
-  const h = parseInt(document.getElementById('sla-h-'+tipoId).value);
-  const a = parseInt(document.getElementById('sla-a-'+tipoId).value);
-  if (!h||!a) { toast('Informe horas do SLA e alerta','error'); return; }
-  try {
-    // Upsert: primeiro tenta update, se não existe insere
-    const existente = await supa('ops_sla_config', `tipo_id=eq.${tipoId}&ativo=eq.true`);
-    if (existente?.length) {
-      await supaPatch('ops_sla_config', existente[0].id, {sla_horas:h, alerta_horas:a});
-    } else {
-      await supaPost('ops_sla_config', {tipo_id:tipoId, sla_horas:h, alerta_horas:a, ativo:true});
+    // Atualiza cache local
+    const d = (window._dadosAuditoria || []).find(x => x.id === id);
+    if (d) { d.status_auditoria = status; d.observacao_auditoria = obs; }
+    // Se confirmou OK, remove da lista (view filtra status != ok)
+    if (status === 'ok') {
+      window._dadosAuditoria = (window._dadosAuditoria || []).filter(x => x.id !== id);
+      fecharDrawerDireto();
     }
-    toast('SLA salvo!','success');
-  } catch(e) { toast('Erro: '+e.message,'error'); }
+    toast('Auditoria salva!', 'success');
+    filtrarAuditoria(document.getElementById('filt-aud')?.value || '');
+  } catch(e) { toast('Erro: ' + e.message, 'error'); }
 }
-
-function renderConfigTemplates() {
-  document.getElementById('config-content').innerHTML = `
-    <div class="config-card" style="max-width:700px">
-      <h4>📝 Templates de Follow-up</h4>
-      ${_templates.map(t=>`
-      <div class="config-row">
-        <div>
-          <div class="config-row-label">${t.titulo}</div>
-          <div class="config-row-sub" style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.texto}</div>
-        </div>
-        <div class="config-row-actions">
-          <button class="btn btn-danger btn-sm" onclick="excluirTemplate(${t.id})">🗑</button>
-        </div>
-      </div>`).join('')}
-      <div style="margin-top:1rem;display:flex;flex-direction:column;gap:.5rem">
-        <div class="field-row">
-          <div><label class="field-label">Título</label><input type="text" class="field-input" id="new-tpl-titulo" placeholder="Ex: Cobrado transportadora"></div>
-          <div><label class="field-label">Tipo (opcional)</label>
-            <select class="field-select" id="new-tpl-tipo">
-              <option value="">Todos os tipos</option>
-              ${_tipos.map(t=>`<option value="${t.id}">${t.nome}</option>`).join('')}
-            </select>
-          </div>
-        </div>
-        <div><label class="field-label">Texto</label><textarea class="field-textarea" id="new-tpl-texto" placeholder="Texto do template. Use {transportadora}, {data}, etc."></textarea></div>
-        <button class="btn btn-primary btn-sm" style="align-self:flex-start" onclick="adicionarTemplate()">+ Adicionar Template</button>
-      </div>
-    </div>`;
-}
-
-async function adicionarTemplate() {
-  const titulo = document.getElementById('new-tpl-titulo').value.trim();
-  const texto  = document.getElementById('new-tpl-texto').value.trim();
-  const tipo_id= parseInt(document.getElementById('new-tpl-tipo').value)||null;
-  if (!titulo||!texto) { toast('Preencha título e texto','error'); return; }
-  try {
-    await supaPost('ops_templates_followup', {titulo, texto, tipo_id, ordem: _templates.length+1});
-    await carregarLookups();
-    renderConfigTemplates();
-    toast('Template adicionado!','success');
-  } catch(e) { toast('Erro: '+e.message,'error'); }
-}
-
-async function excluirTemplate(id) {
-  if (!confirm('Excluir este template?')) return;
-  try {
-    await supaDelete('ops_templates_followup', id);
-    await carregarLookups();
-    renderConfigTemplates();
-    toast('Template excluído','success');
-  } catch(e) { toast('Erro: '+e.message,'error'); }
-}
-
-// ============================================================
-// DRAWER UTILS
-// ============================================================
-function fecharDrawer(e) { if(e.target===document.getElementById('drawer-overlay')) fecharDrawerDireto(); }
-function fecharDrawerDireto() { document.getElementById('drawer-overlay').classList.remove('open'); }
-
-// ============================================================
-// TOAST
-// ============================================================
-function toast(msg, tipo='info') {
-  const c = document.getElementById('toast-container');
-  const t = document.createElement('div');
-  t.className = `toast toast-${tipo}`;
-  t.textContent = msg;
-  c.appendChild(t);
-  requestAnimationFrame(()=>{ t.classList.add('show'); });
-  setTimeout(()=>{ t.classList.remove('show'); setTimeout(()=>t.remove(),300); }, 3000);
-}
-
-
 // ============================================================
 // PÁGINA: ATRASOS DE ENTREGA
 // ============================================================
