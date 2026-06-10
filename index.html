@@ -518,7 +518,7 @@ function navegar(pagina) {
 // ============================================================
 // PÁGINA: TICKETS
 // ============================================================
-let ticketsFiltro = { status:'', tipo:'', responsavel:'', busca:'' };
+let ticketsFiltro = { status:'', tipo:'', responsavel:'', busca:'', mostrarConcluidos: false };
 let todosTickets = [];
 let sortCol = 'criado_em', sortDir = 'desc';
 
@@ -616,13 +616,15 @@ function renderListaTickets() {
   if (ticketsFiltro.responsavel) lista = lista.filter(t => t.responsavel_nome?.toLowerCase().includes(ticketsFiltro.responsavel.toLowerCase()));
   if (ticketsFiltro.busca)       lista = lista.filter(t =>
     (t.numero_ticket+t.cliente+t.nf+t.codigo_rastreio+''+t.transportadora_nome).toLowerCase().includes(ticketsFiltro.busca.toLowerCase()));
+  if (!ticketsFiltro.mostrarConcluidos) lista = lista.filter(t => !t.concluido);
 
   lista = sortTickets(lista);
 
   const abertos   = (todosTickets||[]).filter(t=>!t.concluido).length;
-  const vencidos  = (todosTickets||[]).filter(t=>t.sla_status==='vencido').length;
-  const atencao   = (todosTickets||[]).filter(t=>t.sla_status==='atencao').length;
+  const vencidos  = (todosTickets||[]).filter(t=>!t.concluido && t.sla_status==='vencido').length;
+  const atencao   = (todosTickets||[]).filter(t=>!t.concluido && t.sla_status==='atencao').length;
   const conclHoje = (todosTickets||[]).filter(t=>t.concluido && t.data_conclusao?.startsWith(new Date().toISOString().slice(0,10))).length;
+  const totalConcluidos = (todosTickets||[]).filter(t=>t.concluido).length;
 
   const optStatus = _status.map(s=>`<option value="${s.id}" ${ticketsFiltro.status==s.id?'selected':''}>${s.nome}</option>`).join('');
   const optTipos  = _tipos.map(t=>`<option value="${t.id}" ${ticketsFiltro.tipo==t.id?'selected':''}>${t.icone||''} ${t.nome}</option>`).join('');
@@ -632,11 +634,15 @@ function renderListaTickets() {
       <div class="kpi-card"><div class="kpi-label">Abertos</div><div class="kpi-value" style="color:var(--info)">${abertos}</div></div>
       <div class="kpi-card"><div class="kpi-label">SLA Vencido</div><div class="kpi-value" style="color:var(--danger)">${vencidos}</div></div>
       <div class="kpi-card"><div class="kpi-label">Atenção</div><div class="kpi-value" style="color:var(--warning)">${atencao}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Concluídos Hoje</div><div class="kpi-value" style="color:var(--success)">${conclHoje}</div></div>
+      <div class="kpi-card" onclick="ticketsFiltro.mostrarConcluidos=!ticketsFiltro.mostrarConcluidos;renderListaTickets()" style="cursor:pointer;border-color:${ticketsFiltro.mostrarConcluidos?'var(--success)':'var(--border)'}">
+        <div class="kpi-label">Concluídos</div>
+        <div class="kpi-value" style="color:var(--success)">${totalConcluidos}</div>
+        <div class="kpi-sub">${ticketsFiltro.mostrarConcluidos?'✅ mostrando — clique para ocultar':'clique para ver'}</div>
+      </div>
     </div>
     <div class="table-wrapper">
       <div class="table-header">
-        <h3>Tickets (${lista.length}${lista.length !== (todosTickets||[]).length ? ' / '+todosTickets.length : ''})</h3>
+        <h3>Tickets (${lista.length})${ticketsFiltro.mostrarConcluidos ? ' <span style="font-size:.72rem;color:var(--success);font-weight:400">incluindo concluídos</span>' : ''}</h3>
         <div class="filters">
           <input class="filter-input" placeholder="Buscar..." value="${ticketsFiltro.busca}"
             oninput="ticketsFiltro.busca=this.value;renderListaTickets()">
@@ -673,7 +679,7 @@ function renderListaTickets() {
             const proxFw = t.proximo_followup
               ? new Date(t.proximo_followup+'T00:00:00').toLocaleDateString('pt-BR') : '—';
             const proxFwVencido = t.proximo_followup && new Date(t.proximo_followup) < new Date();
-            return `<tr onclick="abrirDrawerTicket(${t.id})" style="cursor:pointer">
+            return `<tr onclick="abrirDrawerTicket(${t.id})" style="cursor:pointer;${t.concluido?'opacity:.5;':''}">
               <td><span style="font-weight:600;color:var(--primary)">${t.numero_ticket||'—'}</span></td>
               <td><span style="color:${t.tipo_cor||'#6b7280'}">${t.tipo_icone||''} ${t.tipo_nome||'—'}</span></td>
               <td>
