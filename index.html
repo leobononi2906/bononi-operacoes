@@ -292,6 +292,9 @@
         <div class="nav-item" onclick="navegar('auditoria')" id="nav-auditoria">
           <span class="nav-icon">🔍</span> Auditoria Frete
         </div>
+        <div class="nav-item" onclick="renderAtrasos();document.getElementById('topbar-title').textContent='Entregas Atrasadas';document.querySelectorAll('.nav-item').forEach(e=>e.classList.remove('active'));this.classList.add('active')">
+          <span class="nav-icon">⏰</span> Atrasos Entrega
+        </div>
         <div class="nav-section-label">Configurações</div>
         <div class="nav-item" onclick="navegar('config')" id="nav-config">
           <span class="nav-icon">⚙️</span> Configurações
@@ -751,7 +754,15 @@ function abrirNovoTicket() {
       <div><label class="field-label">Responsável *</label><input type="text" class="field-input" id="nt-resp" value="${currentUser.nome}"></div>
     </div>
     <div class="field-row">
-      <div><label class="field-label">Cliente</label><input type="text" class="field-input" id="nt-cliente" placeholder="Nome do cliente"></div>
+      <div>
+        <label class="field-label">Cliente (ERP ou manual)</label>
+        <div style="position:relative">
+          <input type="text" class="field-input" id="nt-cliente" placeholder="Buscar por nome ou CNPJ..." autocomplete="off"
+            oninput="buscarClienteERP(this.value)" onblur="setTimeout(()=>fecharDropCliente(),200)">
+          <div id="drop-cliente" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg3);border:1px solid var(--border);border-radius:0 0 7px 7px;z-index:50;max-height:200px;overflow-y:auto"></div>
+        </div>
+        <input type="hidden" id="nt-cliente-id">
+      </div>
       <div><label class="field-label">NF</label><input type="text" class="field-input" id="nt-nf" placeholder="Ex: 5778"></div>
     </div>
     <div class="field-row">
@@ -784,6 +795,7 @@ async function salvarNovoTicket() {
     responsavel_nome: document.getElementById('nt-resp').value.trim() || currentUser.nome,
     cliente:          document.getElementById('nt-cliente').value.trim()||null,
     nf:               document.getElementById('nt-nf').value.trim()||null,
+    codigo_cliente:   document.getElementById('nt-cliente-id').value||null,
     transportadora_id:parseInt(document.getElementById('nt-transp').value)||null,
     codigo_rastreio:  document.getElementById('nt-rastreio').value.trim()||null,
     previsao_entrega: document.getElementById('nt-prev').value||null,
@@ -806,11 +818,15 @@ async function salvarNovoTicket() {
 // PÁGINA: AUDITORIA DE FRETE
 // ============================================================
 async function renderAuditoria() {
+  document.getElementById('topbar-actions').innerHTML =
+    `<button class="btn btn-outline btn-sm" onclick="renderAtrasos()">📋 Ver Atrasos</button>
+     <button class="btn btn-primary btn-sm" onclick="renderAuditoria()">🔍 Auditoria Frete</button>`;
+
   document.getElementById('main-content').innerHTML = `<div class="loading"><span class="spinner"></span> Carregando auditoria...</div>`;
   const minDiv = parseFloat(_configs['auditoria_divergencia_min']||50);
 
-  const dados = await supa('frt_conhecimentos',
-    `divergencia=gte.${minDiv}&order=divergencia.desc&status_auditoria=neq.ok`);
+  // Usa a view ops_auditoria_frete e filtra no cliente pelo valor mínimo
+  const dados = await supa('ops_auditoria_frete', `divergencia=gte.${minDiv}&order=divergencia.desc`);
 
   if (!dados || dados.length===0) {
     document.getElementById('main-content').innerHTML = `
@@ -821,42 +837,76 @@ async function renderAuditoria() {
     return;
   }
 
+  const totalDiv = dados.reduce((s,d)=>s+parseFloat(d.divergencia||0),0);
+
   document.getElementById('main-content').innerHTML = `
-    <div style="margin-bottom:1rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
-      <div style="font-size:.83rem;color:var(--text2)">
-        Mostrando divergências ≥ <strong style="color:var(--text)">R$ ${minDiv.toFixed(2)}</strong>
-        · <span style="color:var(--danger)">${dados.length} registros</span>
-        · Configure em <a href="#" onclick="navegar('config')" style="color:var(--primary)">Configurações</a>
+    <div class="kpi-grid" style="margin-bottom:1rem">
+      <div class="kpi-card"><div class="kpi-label">Divergências</div><div class="kpi-value" style="color:var(--danger)">${dados.length}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Total em Divergência</div><div class="kpi-value" style="color:var(--warning);font-size:1.3rem">R$ ${totalDiv.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Filtro mínimo</div><div class="kpi-value" style="font-size:1.3rem">R$ ${minDiv.toFixed(2)}</div>
+        <div class="kpi-sub"><a href="#" onclick="navegar('config')" style="color:var(--primary)">Alterar em Config</a></div>
       </div>
     </div>
     <div class="table-wrapper">
-      <div class="table-header"><h3>Divergências de Frete</h3></div>
+      <div class="table-header">
+        <h3>Divergências de Frete (${dados.length})</h3>
+        <div class="filters">
+          <input class="filter-input" id="filt-auditoria" placeholder="Buscar transportadora / destinatário..." oninput="filtrarAuditoria(this.value)">
+        </div>
+      </div>
       <table>
         <thead>
           <tr>
             <th>CTe</th><th>Data</th><th>Transportadora</th>
             <th>Destinatário</th><th>Destino</th>
-            <th>Valor NF</th><th>Valor CTe</th><th>Divergência</th><th>Status</th>
+            <th>Valor NF</th><th>Valor CTe</th><th>Divergência</th><th>Ação</th>
           </tr>
         </thead>
-        <tbody>
-          ${dados.map(d=>`
-          <tr>
-            <td style="font-family:monospace;font-size:.78rem">${d.num_cte||'—'}</td>
-            <td>${d.data_emissao?new Date(d.data_emissao+'T00:00:00').toLocaleDateString('pt-BR'):'—'}</td>
-            <td>${d.nome_transportadora||'—'}</td>
-            <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.nome_destinatario||'—'}</td>
-            <td>${d.cidade_destino||''} ${d.uf_destino||''}</td>
-            <td>R$ ${(d.valor_frete_nf||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
-            <td>R$ ${(d.valor_frete_cte||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
-            <td class="${d.divergencia>0?'divergencia-positiva':'divergencia-negativa'}">
-              ${d.divergencia>0?'+':''}R$ ${Math.abs(d.divergencia||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}
-            </td>
-            <td><span class="badge" style="background:rgba(239,68,68,.15);color:#f87171">${d.status_auditoria||'—'}</span></td>
-          </tr>`).join('')}
+        <tbody id="tbody-auditoria">
+          ${renderLinhasAuditoria(dados)}
         </tbody>
       </table>
     </div>`;
+  window._dadosAuditoria = dados;
+}
+
+function renderLinhasAuditoria(dados) {
+  return dados.map(d=>`
+    <tr>
+      <td style="font-family:monospace;font-size:.78rem">${d.num_cte||'—'}</td>
+      <td>${d.data_emissao?new Date(d.data_emissao+'T00:00:00').toLocaleDateString('pt-BR'):'—'}</td>
+      <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.nome_transportadora||''}">${d.nome_transportadora||'—'}</td>
+      <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.nome_destinatario||''}">${d.nome_destinatario||'—'}</td>
+      <td>${d.cidade_destino||''} ${d.uf_destino||''}</td>
+      <td>R$ ${(d.valor_frete_nf||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
+      <td>R$ ${(d.valor_frete_cte||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
+      <td class="divergencia-positiva">+R$ ${parseFloat(d.divergencia||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
+      <td><button class="btn btn-outline btn-sm" onclick="abrirTicketDeAuditoria(${JSON.stringify(d).replace(/"/g,'&quot;')})">🎫 Ticket</button></td>
+    </tr>`).join('');
+}
+
+function filtrarAuditoria(q) {
+  const dados = (window._dadosAuditoria||[]).filter(d =>
+    !q || (d.nome_transportadora+d.nome_destinatario).toLowerCase().includes(q.toLowerCase()));
+  document.getElementById('tbody-auditoria').innerHTML = renderLinhasAuditoria(dados);
+}
+
+function abrirTicketDeAuditoria(d) {
+  // Pré-preenche novo ticket com dados da divergência
+  abrirNovoTicket();
+  setTimeout(()=>{
+    // Seleciona tipo "Entrega Atrasada" — mais próximo de auditoria
+    const tipoDiv = _tipos.find(t=>t.nome.includes('Outros'));
+    if (tipoDiv) document.getElementById('nt-tipo').value = tipoDiv.id;
+    document.getElementById('nt-cliente').value   = d.nome_destinatario||'';
+    document.getElementById('nt-rastreio').value  = d.num_cte||'';
+    document.getElementById('nt-obs').value       = `Divergência de frete CTe ${d.num_cte}: cobrado R$ ${parseFloat(d.valor_frete_cte||0).toFixed(2)} vs NF R$ ${parseFloat(d.valor_frete_nf||0).toFixed(2)} (diferença +R$ ${parseFloat(d.divergencia||0).toFixed(2)})`;
+    // Seleciona transportadora
+    const tr = _transportadoras.find(t=>d.nome_transportadora?.toUpperCase().includes(t.nome.toUpperCase().split(' ')[0]));
+    if (tr) document.getElementById('nt-transp').value = tr.id;
+    document.getElementById('nt-origem').value    = 'frt_conhecimentos';
+    document.getElementById('nt-origem-id').value = d.id||'';
+  }, 100);
 }
 
 // ============================================================
@@ -1167,6 +1217,135 @@ function toast(msg, tipo='info') {
   c.appendChild(t);
   requestAnimationFrame(()=>{ t.classList.add('show'); });
   setTimeout(()=>{ t.classList.remove('show'); setTimeout(()=>t.remove(),300); }, 3000);
+}
+
+
+// ============================================================
+// PÁGINA: ATRASOS DE ENTREGA
+// ============================================================
+async function renderAtrasos() {
+  document.getElementById('topbar-actions').innerHTML =
+    `<button class="btn btn-primary btn-sm" onclick="renderAuditoria()">🔍 Auditoria Frete</button>
+     <button class="btn btn-outline btn-sm" onclick="renderAtrasos()">📋 Ver Atrasos</button>`;
+  document.getElementById('main-content').innerHTML = `<div class="loading"><span class="spinner"></span> Carregando entregas atrasadas...</div>`;
+
+  const diasMin = parseInt(_configs['dias_atraso_entrega']||10);
+  const dados = await supa('ops_entregas_atrasadas',
+    `dias_desde_faturamento=gte.${diasMin}&order=dias_desde_faturamento.desc`);
+
+  if (!dados || dados.length===0) {
+    document.getElementById('main-content').innerHTML =
+      `<div class="empty-state"><div class="empty-icon">✅</div><p>Nenhuma entrega atrasada encontrada.</p></div>`;
+    return;
+  }
+
+  document.getElementById('main-content').innerHTML = `
+    <div class="kpi-grid" style="margin-bottom:1rem">
+      <div class="kpi-card"><div class="kpi-label">Em Atraso</div><div class="kpi-value" style="color:var(--danger)">${dados.length}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Critério</div><div class="kpi-value" style="font-size:1.2rem">> ${diasMin} dias</div>
+        <div class="kpi-sub"><a href="#" onclick="navegar('config')" style="color:var(--primary)">Alterar em Config</a></div>
+      </div>
+      <div class="kpi-card"><div class="kpi-label">Mais Antigo</div>
+        <div class="kpi-value" style="color:var(--warning);font-size:1.3rem">${dados[0]?.dias_desde_faturamento} dias</div>
+      </div>
+    </div>
+    <div class="table-wrapper">
+      <div class="table-header">
+        <h3>Entregas Atrasadas (${dados.length})</h3>
+        <div class="filters">
+          <input class="filter-input" id="filt-atrasos" placeholder="Buscar cliente / NF..." oninput="filtrarAtrasos(this.value)">
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr><th>NF</th><th>Cliente</th><th>Data Fat.</th><th>Dias</th><th>Transportadora</th><th>Valor</th><th>Empresa</th><th>Ação</th></tr>
+        </thead>
+        <tbody id="tbody-atrasos">
+          ${renderLinhasAtrasos(dados)}
+        </tbody>
+      </table>
+    </div>`;
+  window._dadosAtrasos = dados;
+}
+
+function renderLinhasAtrasos(dados) {
+  return dados.map(d=>`
+    <tr>
+      <td style="font-family:monospace;font-weight:600">${d.num_nf||'—'}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.nome_cliente||'—'}</td>
+      <td>${d.data_faturamento?new Date(d.data_faturamento+'T00:00:00').toLocaleDateString('pt-BR'):'—'}</td>
+      <td><span style="color:${d.dias_desde_faturamento>30?'var(--danger)':'var(--warning)'};font-weight:700">${d.dias_desde_faturamento}d</span></td>
+      <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.nome_transportadora||'—'}</td>
+      <td>R$ ${(d.faturamento_doc||0).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
+      <td style="font-size:.75rem;color:var(--text2)">${d.empresa||''}</td>
+      <td><button class="btn btn-outline btn-sm" onclick="abrirTicketDeAtraso(${JSON.stringify(d).replace(/"/g,'&quot;')})">🎫 Ticket</button></td>
+    </tr>`).join('');
+}
+
+function filtrarAtrasos(q) {
+  const dados = (window._dadosAtrasos||[]).filter(d =>
+    !q || (d.nome_cliente+d.num_nf).toLowerCase().includes(q.toLowerCase()));
+  document.getElementById('tbody-atrasos').innerHTML = renderLinhasAtrasos(dados);
+}
+
+function abrirTicketDeAtraso(d) {
+  abrirNovoTicket();
+  setTimeout(()=>{
+    const tipoAtraso = _tipos.find(t=>t.nome.includes('Atraso'));
+    if (tipoAtraso) document.getElementById('nt-tipo').value = tipoAtraso.id;
+    document.getElementById('nt-cliente').value  = d.nome_cliente||'';
+    document.getElementById('nt-cliente-id').value = d.id_cliente||'';
+    document.getElementById('nt-nf').value       = d.num_nf||'';
+    document.getElementById('nt-obs').value      = `NF ${d.num_nf} emitida em ${d.data_faturamento} — ${d.dias_desde_faturamento} dias sem entrega registrada.`;
+    const tr = _transportadoras.find(t=>d.nome_transportadora?.toUpperCase().includes(t.nome.toUpperCase().split(' ')[0]));
+    if (tr) document.getElementById('nt-transp').value = tr.id;
+    document.getElementById('nt-origem').value    = 'frt_conhecimentos';
+    document.getElementById('nt-origem-id').value = d.id_doc||'';
+  }, 100);
+}
+
+// ============================================================
+// BUSCA CLIENTE ERP
+// ============================================================
+let _clienteTimer = null;
+async function buscarClienteERP(q) {
+  const drop = document.getElementById('drop-cliente');
+  if (!q || q.length < 3) { drop.style.display='none'; return; }
+  clearTimeout(_clienteTimer);
+  _clienteTimer = setTimeout(async () => {
+    try {
+      const isDoc = /[0-9.\/\-]/.test(q) && q.replace(/\D/g,'').length >= 6;
+      let query = isDoc
+        ? `cnpj=ilike.*${q.replace(/\D/g,'')}*&select=id_cliente,nome_cliente,cnpj,cidade,uf&limit=8`
+        : `nome_cliente=ilike.*${encodeURIComponent(q)}*&select=id_cliente,nome_cliente,cnpj,cidade,uf&limit=8`;
+      const r = await fetch(`${SUPA_URL}/rest/v1/vw_dim_cliente?${query}&limit=8`, {
+        headers: { apikey: SUPA_KEY, Authorization: 'Bearer '+(currentSession?.access_token||SUPA_KEY) }
+      });
+      const dados = await r.json();
+      if (!dados.length) {
+        drop.innerHTML = '<div style="padding:.5rem .75rem;font-size:.78rem;color:var(--text2)">Nenhum cliente encontrado — digite o nome manualmente</div>';
+      } else {
+        drop.innerHTML = dados.map(c => `
+          <div onclick="selecionarCliente('${c.id_cliente}','${(c.nome_cliente||'').replace(/'/g,"\'")}','${c.cnpj||''}')"
+            style="padding:.5rem .75rem;cursor:pointer;font-size:.82rem;border-bottom:1px solid var(--border)"
+            onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background=''">
+            <div style="font-weight:500">${c.nome_cliente||''}</div>
+            <div style="font-size:.72rem;color:var(--text2)">${c.cnpj||''} · ${c.cidade||''} ${c.uf||''}</div>
+          </div>`).join('');
+      }
+      drop.style.display = 'block';
+    } catch(e) { console.error(e); }
+  }, 350);
+}
+
+function selecionarCliente(id, nome, cnpj) {
+  document.getElementById('nt-cliente').value = nome;
+  document.getElementById('nt-cliente-id').value = id;
+  document.getElementById('drop-cliente').style.display = 'none';
+}
+function fecharDropCliente() {
+  const d = document.getElementById('drop-cliente');
+  if (d) d.style.display = 'none';
 }
 
 // ============================================================
