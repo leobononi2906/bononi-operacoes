@@ -292,9 +292,7 @@
         <div class="nav-item" onclick="navegar('auditoria')" id="nav-auditoria">
           <span class="nav-icon">🔍</span> Auditoria Frete
         </div>
-        <div class="nav-item" onclick="renderAtrasos();document.getElementById('topbar-title').textContent='Entregas Atrasadas';document.querySelectorAll('.nav-item').forEach(e=>e.classList.remove('active'));this.classList.add('active')">
-          <span class="nav-icon">⏰</span> Atrasos Entrega
-        </div>
+
         <div class="nav-section-label">Configurações</div>
         <div class="nav-item" onclick="navegar('config')" id="nav-config">
           <span class="nav-icon">⚙️</span> Configurações
@@ -475,31 +473,112 @@ function navegar(pagina) {
 // ============================================================
 let ticketsFiltro = { status:'', tipo:'', responsavel:'', busca:'' };
 let todosTickets = [];
+let sortCol = 'criado_em', sortDir = 'desc';
 
 async function renderTickets() {
   document.getElementById('topbar-actions').innerHTML =
     `<button class="btn btn-primary btn-sm" onclick="abrirNovoTicket()">+ Novo Ticket</button>`;
   document.getElementById('main-content').innerHTML = `<div class="loading"><span class="spinner"></span> Carregando tickets...</div>`;
+
+  // Auto-cria tickets de atraso em background (silencioso, deduplicado pela view)
+  criarTicketsAtrasoAuto().catch(e => console.warn('Auto-atraso:', e));
+
   todosTickets = await supa('ops_tickets_view', 'order=criado_em.desc');
   renderListaTickets();
 }
 
+async function criarTicketsAtrasoAuto() {
+  const diasMin = parseInt(_configs['dias_atraso_entrega']||10);
+  const autoAtivo = _configs['auto_ticket_atraso_entrega'] !== 'false';
+  if (!autoAtivo) return;
+
+  const tipoId = _tipos.find(t=>t.nome.includes('Atraso'))?.id;
+  const statusId = _status.find(s=>s.nome==='Pendente')?.id;
+  const prioId   = _prioridades.find(p=>p.nome==='Normal')?.id;
+  if (!tipoId || !statusId) return;
+
+  const atrasos = await supa('ops_entregas_atrasadas', `dias_desde_faturamento=gte.${diasMin}&order=dias_desde_faturamento.desc`);
+  if (!atrasos?.length) return;
+
+  // Cria em batch de até 50 por vez para não travar
+  const lote = atrasos.slice(0, 50);
+  const inserts = lote.map(d => ({
+    tipo_id:          tipoId,
+    status_id:        statusId,
+    prioridade_id:    d.dias_desde_faturamento > 30 ? (_prioridades.find(p=>p.nome==='Alta')?.id || prioId) : prioId,
+    responsavel_nome: currentUser.nome,
+    cliente:          d.nome_cliente || null,
+    codigo_cliente:   String(d.id_cliente || ''),
+    nf:               d.num_nf || null,
+    transportadora_nome: d.nome_transportadora || null,
+    origem_tipo:      'frt_conhecimentos',
+    origem_id:        String(d.id_doc || ''),
+    observacao:       `Entrega atrasada ${d.dias_desde_faturamento} dias. NF ${d.num_nf} emitida em ${d.data_faturamento}.`,
+    criado_por:       'sistema',
+  }));
+
+  // Insere via POST em batch
+  await fetch(`${SUPA_URL}/rest/v1/ops_tickets`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: SUPA_KEY,
+      Authorization: 'Bearer ' + (currentSession?.access_token || SUPA_KEY),
+      Prefer: 'return=minimal'
+    },
+    body: JSON.stringify(inserts)
+  });
+
+  // Recarrega lista depois de criar
+  todosTickets = await supa('ops_tickets_view', 'order=criado_em.desc');
+  renderListaTickets();
+}
+
+function sortTickets(lista) {
+  return [...lista].sort((a, b) => {
+    let va = a[sortCol], vb = b[sortCol];
+    if (va == null) va = '';
+    if (vb == null) vb = '';
+    // Datas e números
+    if (typeof va === 'number' || !isNaN(parseFloat(va))) {
+      va = parseFloat(va)||0; vb = parseFloat(vb)||0;
+    } else {
+      va = String(va).toLowerCase(); vb = String(vb).toLowerCase();
+    }
+    if (va < vb) return sortDir==='asc' ? -1 : 1;
+    if (va > vb) return sortDir==='asc' ? 1 : -1;
+    return 0;
+  });
+}
+
+function setSort(col) {
+  if (sortCol === col) sortDir = sortDir==='asc' ? 'desc' : 'asc';
+  else { sortCol = col; sortDir = 'asc'; }
+  renderListaTickets();
+}
+
+function thSort(col, label) {
+  const arrow = sortCol===col ? (sortDir==='asc' ? ' ▲' : ' ▼') : '';
+  return `<th onclick="setSort('${col}')" style="cursor:pointer;user-select:none" title="Ordenar por ${label}">${label}${arrow}</th>`;
+}
+
 function renderListaTickets() {
   let lista = todosTickets || [];
-  if (ticketsFiltro.status)     lista = lista.filter(t => t.status_id == ticketsFiltro.status);
-  if (ticketsFiltro.tipo)       lista = lista.filter(t => t.tipo_id == ticketsFiltro.tipo);
-  if (ticketsFiltro.responsavel)lista = lista.filter(t => t.responsavel_nome?.toLowerCase().includes(ticketsFiltro.responsavel.toLowerCase()));
-  if (ticketsFiltro.busca)      lista = lista.filter(t =>
-    (t.numero_ticket+t.cliente+t.nf+t.codigo_rastreio||'').toLowerCase().includes(ticketsFiltro.busca.toLowerCase()));
+  if (ticketsFiltro.status)      lista = lista.filter(t => t.status_id == ticketsFiltro.status);
+  if (ticketsFiltro.tipo)        lista = lista.filter(t => t.tipo_id == ticketsFiltro.tipo);
+  if (ticketsFiltro.responsavel) lista = lista.filter(t => t.responsavel_nome?.toLowerCase().includes(ticketsFiltro.responsavel.toLowerCase()));
+  if (ticketsFiltro.busca)       lista = lista.filter(t =>
+    (t.numero_ticket+t.cliente+t.nf+t.codigo_rastreio+''+t.transportadora_nome).toLowerCase().includes(ticketsFiltro.busca.toLowerCase()));
 
-  // KPIs
-  const abertos   = lista.filter(t=>!t.concluido).length;
-  const vencidos  = lista.filter(t=>t.sla_status==='vencido').length;
-  const atencao   = lista.filter(t=>t.sla_status==='atencao').length;
-  const conclHoje = lista.filter(t=>t.concluido && t.data_conclusao?.startsWith(new Date().toISOString().slice(0,10))).length;
+  lista = sortTickets(lista);
 
-  const optStatus = _status.map(s=>`<option value="${s.id}">${s.nome}</option>`).join('');
-  const optTipos  = _tipos.map(t=>`<option value="${t.id}">${t.icone||''} ${t.nome}</option>`).join('');
+  const abertos   = (todosTickets||[]).filter(t=>!t.concluido).length;
+  const vencidos  = (todosTickets||[]).filter(t=>t.sla_status==='vencido').length;
+  const atencao   = (todosTickets||[]).filter(t=>t.sla_status==='atencao').length;
+  const conclHoje = (todosTickets||[]).filter(t=>t.concluido && t.data_conclusao?.startsWith(new Date().toISOString().slice(0,10))).length;
+
+  const optStatus = _status.map(s=>`<option value="${s.id}" ${ticketsFiltro.status==s.id?'selected':''}>${s.nome}</option>`).join('');
+  const optTipos  = _tipos.map(t=>`<option value="${t.id}" ${ticketsFiltro.tipo==t.id?'selected':''}>${t.icone||''} ${t.nome}</option>`).join('');
 
   document.getElementById('main-content').innerHTML = `
     <div class="kpi-grid">
@@ -510,9 +589,10 @@ function renderListaTickets() {
     </div>
     <div class="table-wrapper">
       <div class="table-header">
-        <h3>Tickets (${lista.length})</h3>
+        <h3>Tickets (${lista.length}${lista.length !== (todosTickets||[]).length ? ' / '+todosTickets.length : ''})</h3>
         <div class="filters">
-          <input class="filter-input" placeholder="Buscar..." value="${ticketsFiltro.busca}" oninput="ticketsFiltro.busca=this.value;renderListaTickets()">
+          <input class="filter-input" placeholder="Buscar..." value="${ticketsFiltro.busca}"
+            oninput="ticketsFiltro.busca=this.value;renderListaTickets()">
           <select class="filter-input" onchange="ticketsFiltro.status=this.value;renderListaTickets()">
             <option value="">Todos os status</option>${optStatus}
           </select>
@@ -521,32 +601,45 @@ function renderListaTickets() {
           </select>
         </div>
       </div>
-      ${lista.length===0 ? '<div class="empty-state"><div class="empty-icon">🎫</div><p>Nenhum ticket encontrado.</p></div>' : `
-      <table>
+      ${lista.length===0
+        ? '<div class="empty-state"><div class="empty-icon">🎫</div><p>Nenhum ticket encontrado.</p></div>'
+        : `<table>
         <thead>
           <tr>
-            <th>Nº</th><th>Tipo</th><th>Cliente / NF</th>
-            <th>Transportadora</th><th>Status</th><th>SLA</th>
-            <th>Resp.</th><th>Próx. Follow-up</th>
+            ${thSort('numero_ticket','Nº')}
+            ${thSort('tipo_nome','Tipo')}
+            ${thSort('cliente','Cliente / NF')}
+            ${thSort('transportadora_nome','Transportadora')}
+            ${thSort('status_nome','Status')}
+            ${thSort('sla_status','SLA')}
+            ${thSort('responsavel_nome','Resp.')}
+            ${thSort('ultimo_followup_em','Último Follow-up')}
+            ${thSort('proximo_followup','Próx. Follow-up')}
           </tr>
         </thead>
         <tbody>
-          ${lista.map(t => `
-          <tr class="clickable" onclick="abrirDrawerTicket(${t.id})">
-            <td><span style="font-weight:600;color:var(--primary)">${t.numero_ticket||'—'}</span></td>
-            <td><span style="color:${t.tipo_cor||'#6b7280'}">${t.tipo_icone||''} ${t.tipo_nome||'—'}</span></td>
-            <td>
-              <div style="font-weight:500">${t.cliente||'—'}</div>
-              <div style="font-size:.72rem;color:var(--text2)">${t.nf||''}</div>
-            </td>
-            <td>${t.transportadora_nome||t.transp_contato_nome||'—'}</td>
-            <td><span class="badge" style="background:${t.status_cor||'#6b7280'}22;color:${t.status_cor||'#9ca3af'}">${t.status_nome||'—'}</span></td>
-            <td><span class="badge sla-${t.sla_status||'sem_sla'}">${slaLabel(t)}</span></td>
-            <td>${t.responsavel_nome||'—'}</td>
-            <td style="font-size:.78rem;color:${t.proximo_followup && new Date(t.proximo_followup)<new Date()?'var(--danger)':'var(--text2)'}">
-              ${t.proximo_followup ? new Date(t.proximo_followup+'T00:00:00').toLocaleDateString('pt-BR') : '—'}
-            </td>
-          </tr>`).join('')}
+          ${lista.map(t => {
+            const ultimoFw = t.ultimo_followup_em
+              ? new Date(t.ultimo_followup_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
+              : '—';
+            const proxFw = t.proximo_followup
+              ? new Date(t.proximo_followup+'T00:00:00').toLocaleDateString('pt-BR') : '—';
+            const proxFwVencido = t.proximo_followup && new Date(t.proximo_followup) < new Date();
+            return `<tr class="clickable" onclick="abrirDrawerTicket(${t.id})">
+              <td><span style="font-weight:600;color:var(--primary)">${t.numero_ticket||'—'}</span></td>
+              <td><span style="color:${t.tipo_cor||'#6b7280'}">${t.tipo_icone||''} ${t.tipo_nome||'—'}</span></td>
+              <td>
+                <div style="font-weight:500;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.cliente||'—'}</div>
+                <div style="font-size:.72rem;color:var(--text2)">${t.nf||''}</div>
+              </td>
+              <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.transportadora_nome||'—'}</td>
+              <td><span class="badge" style="background:${t.status_cor||'#6b7280'}22;color:${t.status_cor||'#9ca3af'}">${t.status_nome||'—'}</span></td>
+              <td><span class="badge sla-${t.sla_status||'sem_sla'}">${slaLabel(t)}</span></td>
+              <td style="font-size:.8rem">${t.responsavel_nome||'—'}</td>
+              <td style="font-size:.75rem;color:var(--text2)">${ultimoFw}</td>
+              <td style="font-size:.78rem;color:${proxFwVencido?'var(--danger)':'var(--text2)'};font-weight:${proxFwVencido?'600':'400'}">${proxFw}</td>
+            </tr>`;
+          }).join('')}
         </tbody>
       </table>`}
     </div>`;
