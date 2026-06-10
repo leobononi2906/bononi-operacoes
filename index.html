@@ -190,6 +190,7 @@
   .tipo-badge-contato_cliente { color: #60a5fa; }
   .tipo-badge-resolucao       { color: #34d399; }
   .tipo-badge-interno         { color: #a78bfa; }
+  .tipo-badge-de_assistencia  { color: #f472b6; }
 
   /* TEMPLATE PILLS */
   .templates-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.75rem; }
@@ -745,21 +746,23 @@ async function abrirDrawerTicket(id) {
   const optPrio   = _prioridades.map(p=>`<option value="${p.id}" ${t.prioridade_id==p.id?'selected':''}>${p.nome}</option>`).join('');
   const optTipo   = _tipos.map(tp=>`<option value="${tp.id}" ${t.tipo_id==tp.id?'selected':''}>${tp.icone||''} ${tp.nome}</option>`).join('');
   const optTransp = _transportadoras.map(tr=>`<option value="${tr.id}" ${t.transportadora_id==tr.id?'selected':''}>${tr.nome}</option>`).join('');
-  const optTipoFw = ['interno','cobranca_transp','contato_cliente','resolucao'].map(x=>`<option value="${x}">${x.replace('_',' ')}</option>`).join('');
+  const optTipoFw = ['interno','cobranca_transp','contato_cliente','resolucao'].map(x=>`<option value="${x}">${x.replace(/_/g,' ')}</option>`).join('');
 
   const tplRelevantes = _templates.filter(tp => !tp.tipo_id || tp.tipo_id==t.tipo_id);
   const tplPills = tplRelevantes.map(tp=>`<span class="template-pill" onclick="usarTemplate(${tp.id})">${tp.titulo}</span>`).join('');
 
-  const fwHtml = (followups||[]).map(f=>`
-    <div class="followup-item">
+  const fwHtml = (followups||[]).map(f=>{
+    const deAssist = f.tipo === 'de_assistencia';
+    return `<div class="followup-item" style="${deAssist?'border-left:3px solid #f472b6;':''}">
       <div class="followup-meta">
         <strong>${f.responsavel_nome}</strong>
         <span>·</span>
         <span>${new Date(f.criado_em).toLocaleString('pt-BR')}</span>
-        <span class="tipo-badge-${f.tipo}">[${f.tipo.replace('_',' ')}]</span>
+        <span class="tipo-badge-${f.tipo}">${deAssist?'🔧 Assistência':'['+f.tipo.replace(/_/g,' ')+']'}</span>
       </div>
       <div class="followup-texto">${f.texto}</div>
-    </div>`).join('') || '<div style="color:var(--text2);font-size:.82rem;padding:.5rem 0">Nenhum follow-up ainda.</div>';
+    </div>`;
+  }).join('') || '<div style="color:var(--text2);font-size:.82rem;padding:.5rem 0">Nenhum follow-up ainda.</div>';
 
   // Busca rastreio pelo num_nf
   let rastreioHtml = '<div style="color:var(--text2);font-size:.8rem">Buscando rastreio...</div>';
@@ -1095,7 +1098,16 @@ async function renderAuditoria() {
     '<div class="loading"><span class="spinner"></span> Carregando auditoria...</div>';
 
   const minDiv = parseFloat(_configs['auditoria_divergencia_min'] || 50);
-  const dados  = await supa('ops_auditoria_frete', `divergencia=gte.${minDiv}&order=divergencia.desc`);
+  // Mês padrão = mês atual
+  const hoje = new Date();
+  const mesAtual = `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}`;
+  window._audMesFiltro = window._audMesFiltro || mesAtual;
+  const mesInicio = window._audMesFiltro + '-01';
+  // Último dia do mês
+  const [ano, mes] = window._audMesFiltro.split('-').map(Number);
+  const mesFim = new Date(ano, mes, 0).toISOString().slice(0,10);
+  const dados  = await supa('ops_auditoria_frete',
+    `divergencia=gte.${minDiv}&data_emissao=gte.${mesInicio}&data_emissao=lte.${mesFim}&order=divergencia.desc`);
   window._dadosAuditoria = dados || [];
 
   if (!dados || dados.length === 0) {
@@ -1135,8 +1147,11 @@ async function renderAuditoria() {
       <div class="table-header">
         <h3>Auditoria de Frete (${dados.length})</h3>
         <div class="filters">
+          <select class="filter-input" id="filt-aud-mes" onchange="trocarMesAuditoria(this.value)" style="min-width:130px">
+            ${gerarOpsMeses()}
+          </select>
           <input class="filter-input" id="filt-aud" placeholder="Buscar transp. / destinatário / NF..."
-            oninput="filtrarAuditoria(this.value)" style="min-width:220px">
+            oninput="filtrarAuditoria(this.value)" style="min-width:200px">
           <select class="filter-input" id="filt-aud-status" onchange="filtrarAuditoria(document.getElementById('filt-aud').value)">
             <option value="">Todos os status</option>
             <option value="pendente">Pendente</option>
@@ -1161,6 +1176,24 @@ async function renderAuditoria() {
       </table>
     </div>`;
   window._statusCoresAuditoria = statusCores;
+}
+
+function gerarOpsMeses() {
+  const hoje = new Date();
+  const mesAtual = window._audMesFiltro || `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}`;
+  let opts = '';
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+    const val = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const lbl = d.toLocaleDateString('pt-BR', {month:'long', year:'numeric'});
+    opts += `<option value="${val}" ${val===mesAtual?'selected':''}>${lbl}</option>`;
+  }
+  return opts;
+}
+
+async function trocarMesAuditoria(mes) {
+  window._audMesFiltro = mes;
+  await renderAuditoria();
 }
 
 function renderLinhasAuditoria(dados, statusCores) {
