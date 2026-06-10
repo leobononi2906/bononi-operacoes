@@ -1588,6 +1588,303 @@ function fecharDropCliente() {
 }
 
 // ============================================================
+// CONFIGURAÇÕES
+// ============================================================
+function renderConfig() {
+  document.getElementById('topbar-actions').innerHTML = '';
+  document.getElementById('main-content').innerHTML = `
+    <div class="tabs" id="config-tabs">
+      <button class="tab-btn active" onclick="abaConfig('geral',this)">Geral</button>
+      <button class="tab-btn" onclick="abaConfig('tipos',this)">Tipos</button>
+      <button class="tab-btn" onclick="abaConfig('status',this)">Status</button>
+      <button class="tab-btn" onclick="abaConfig('prios',this)">Prioridades</button>
+      <button class="tab-btn" onclick="abaConfig('transp',this)">Transportadoras</button>
+      <button class="tab-btn" onclick="abaConfig('sla',this)">SLA</button>
+      <button class="tab-btn" onclick="abaConfig('templates',this)">Templates</button>
+    </div>
+    <div id="config-content"><div class="loading"><span class="spinner"></span></div></div>`;
+  renderConfigGeral();
+}
+
+function abaConfig(aba, btn) {
+  document.querySelectorAll('#config-tabs .tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const fns = { geral: renderConfigGeral, tipos: () => renderConfigLista('ops_tipos', _tipos, 'Tipos de Ticket', ['nome','cor','icone']),
+    status: renderConfigStatus, prios: () => renderConfigLista('ops_prioridades', _prioridades, 'Prioridades', ['nome','cor']),
+    transp: renderConfigTransp, sla: renderConfigSLA, templates: renderConfigTemplates };
+  if (fns[aba]) fns[aba]();
+}
+
+function renderConfigGeral() {
+  const cfgs = [
+    { chave: 'dias_atraso_entrega',        label: 'Dias para ticket de atraso',   desc: 'NFs com mais de X dias sem entrega' },
+    { chave: 'auditoria_divergencia_min',  label: 'Divergência mínima (R$)',       desc: 'Valor mínimo para aparecer na auditoria' },
+    { chave: 'auto_ticket_portal',         label: 'Auto-ticket portal',            desc: 'Criar ticket ao incluir pedido no portal' },
+    { chave: 'auto_ticket_atraso_entrega', label: 'Auto-ticket atraso de entrega', desc: 'Criar ticket para entregas atrasadas' },
+  ];
+  document.getElementById('config-content').innerHTML = `
+    <div class="config-card" style="max-width:600px">
+      <h4>⚙️ Configurações Gerais</h4>
+      ${cfgs.map(c => `
+      <div class="config-row">
+        <div><div class="config-row-label">${c.label}</div><div class="config-row-sub">${c.desc}</div></div>
+        <div class="config-row-actions">
+          <input type="text" class="filter-input" style="width:120px" id="cfg-${c.chave}" value="${_configs[c.chave]||''}">
+          <button class="btn btn-outline btn-sm" onclick="salvarConfig('${c.chave}')">Salvar</button>
+        </div>
+      </div>`).join('')}
+    </div>`;
+}
+
+async function salvarConfig(chave) {
+  const val = document.getElementById('cfg-' + chave)?.value || '';
+  try {
+    await fetch(`${SUPA_URL}/rest/v1/ops_configuracoes?chave=eq.${chave}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type':'application/json', apikey: SUPA_KEY,
+        Authorization: 'Bearer ' + (currentSession?.access_token || SUPA_KEY) },
+      body: JSON.stringify({ valor: val, atualizado_em: new Date().toISOString() })
+    });
+    _configs[chave] = val;
+    toast('Configuração salva!', 'success');
+  } catch(e) { toast('Erro: ' + e.message, 'error'); }
+}
+
+function renderConfigStatus() {
+  document.getElementById('config-content').innerHTML = `
+    <div class="config-card" style="max-width:600px">
+      <h4>🔵 Status dos Tickets</h4>
+      <div id="status-lista">${renderStatusLista()}</div>
+      <div class="add-row" style="margin-top:.75rem">
+        <input type="text" class="field-input" id="new-status-nome" placeholder="Nome do status">
+        <input type="text" class="field-input" style="width:90px" id="new-status-cor" placeholder="#cor" value="#6b7280">
+        <label style="display:flex;align-items:center;gap:.3rem;font-size:.75rem;color:var(--text2)">
+          <input type="checkbox" id="new-status-finaliza"> Finaliza
+        </label>
+        <button class="btn btn-primary btn-sm" onclick="adicionarStatus()">+ Add</button>
+      </div>
+    </div>`;
+}
+
+function renderStatusLista() {
+  return _status.map(s => `
+    <div class="config-row">
+      <div style="display:flex;align-items:center;gap:.5rem">
+        <span style="width:12px;height:12px;border-radius:50%;background:${s.cor};display:inline-block"></span>
+        <span>${s.nome}</span>
+        ${s.finaliza_ticket ? '<span style="font-size:.68rem;background:rgba(16,185,129,.15);color:#34d399;padding:.1rem .4rem;border-radius:20px">finaliza</span>' : ''}
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="toggleAtivo('ops_status',${s.id},${s.ativo},'status')">
+        ${s.ativo ? '🚫 Desativar' : '✅ Ativar'}
+      </button>
+    </div>`).join('');
+}
+
+async function adicionarStatus() {
+  const nome = document.getElementById('new-status-nome').value.trim();
+  const cor  = document.getElementById('new-status-cor').value.trim() || '#6b7280';
+  const fin  = document.getElementById('new-status-finaliza').checked;
+  if (!nome) return;
+  try {
+    await supaPost('ops_status', { nome, cor, finaliza_ticket: fin, ordem: _status.length + 1 });
+    await carregarLookups();
+    renderConfigStatus();
+    toast('Status adicionado!', 'success');
+  } catch(e) { toast('Erro: ' + e.message, 'error'); }
+}
+
+function renderConfigLista(tabela, lista, titulo, campos) {
+  document.getElementById('config-content').innerHTML = `
+    <div class="config-card" style="max-width:600px">
+      <h4>${titulo}</h4>
+      ${lista.map(item => `
+      <div class="config-row">
+        <div>${item.icone ? item.icone + ' ' : ''}<span style="color:${item.cor||'inherit'}">${item.nome}</span></div>
+        <button class="btn btn-outline btn-sm" onclick="toggleAtivo('${tabela}',${item.id},${item.ativo},'${tabela}')">
+          ${item.ativo ? '🚫 Desativar' : '✅ Ativar'}
+        </button>
+      </div>`).join('')}
+      <div class="add-row" style="margin-top:.75rem">
+        ${campos.map(c => `<input type="text" class="field-input" id="new-${tabela}-${c}" placeholder="${c}">`).join('')}
+        <button class="btn btn-primary btn-sm" onclick="adicionarItem('${tabela}',${JSON.stringify(campos)})">+ Add</button>
+      </div>
+    </div>`;
+}
+
+async function adicionarItem(tabela, campos) {
+  const body = {};
+  campos.forEach(c => { body[c] = document.getElementById('new-' + tabela + '-' + c)?.value.trim() || null; });
+  if (!body.nome) return;
+  try {
+    await supaPost(tabela, body);
+    await carregarLookups();
+    const lista = tabela === 'ops_tipos' ? _tipos : _prioridades;
+    const titulo = tabela === 'ops_tipos' ? 'Tipos de Ticket' : 'Prioridades';
+    renderConfigLista(tabela, lista, titulo, campos);
+    toast('Item adicionado!', 'success');
+  } catch(e) { toast('Erro: ' + e.message, 'error'); }
+}
+
+async function toggleAtivo(tabela, id, ativo, tipo) {
+  try {
+    await supaPatch(tabela, id, { ativo: !ativo });
+    await carregarLookups();
+    if (tipo === 'status') renderConfigStatus();
+    else renderConfigLista(tabela, tabela === 'ops_tipos' ? _tipos : _prioridades,
+      tabela === 'ops_tipos' ? 'Tipos de Ticket' : 'Prioridades', ['nome','cor']);
+    toast((ativo ? 'Desativado' : 'Ativado') + '!', 'success');
+  } catch(e) { toast('Erro: ' + e.message, 'error'); }
+}
+
+function renderConfigTransp() {
+  document.getElementById('config-content').innerHTML = `
+    <div class="config-card" style="max-width:700px">
+      <h4>🚚 Transportadoras</h4>
+      ${_transportadoras.map(t => `
+      <div class="config-row">
+        <div>
+          <div class="config-row-label">${t.nome}</div>
+          <div class="config-row-sub">${t.contato_nome || '—'} ${t.contato_telefone ? '· ' + t.contato_telefone : ''}</div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="editarTransp(${t.id})">✏️ Editar</button>
+      </div>`).join('')}
+      <div class="add-row" style="margin-top:.75rem">
+        <input type="text" class="field-input" id="new-transp-nome" placeholder="Nome">
+        <input type="text" class="field-input" id="new-transp-contato" placeholder="Contato">
+        <input type="text" class="field-input" id="new-transp-telefone" placeholder="Telefone">
+        <button class="btn btn-primary btn-sm" onclick="adicionarTransp()">+ Add</button>
+      </div>
+    </div>`;
+}
+
+async function adicionarTransp() {
+  const nome = document.getElementById('new-transp-nome').value.trim();
+  if (!nome) return;
+  try {
+    await supaPost('ops_transportadoras', {
+      nome,
+      contato_nome:     document.getElementById('new-transp-contato').value.trim() || null,
+      contato_telefone: document.getElementById('new-transp-telefone').value.trim() || null
+    });
+    await carregarLookups();
+    renderConfigTransp();
+    toast('Transportadora adicionada!', 'success');
+  } catch(e) { toast('Erro: ' + e.message, 'error'); }
+}
+
+async function editarTransp(id) {
+  const t = _transportadoras.find(x => x.id == id);
+  if (!t) return;
+  const nome = prompt('Nome:', t.nome); if (!nome) return;
+  const cont = prompt('Contato:', t.contato_nome || '');
+  const tel  = prompt('Telefone:', t.contato_telefone || '');
+  try {
+    await supaPatch('ops_transportadoras', id, { nome, contato_nome: cont || null, contato_telefone: tel || null });
+    await carregarLookups();
+    renderConfigTransp();
+    toast('Atualizado!', 'success');
+  } catch(e) { toast('Erro: ' + e.message, 'error'); }
+}
+
+async function renderConfigSLA() {
+  const slaData = await supa('ops_sla_config', 'ativo=eq.true&order=tipo_id');
+  document.getElementById('config-content').innerHTML = `
+    <div class="config-card" style="max-width:620px">
+      <h4>⏱ SLA por Tipo de Ticket</h4>
+      ${_tipos.map(tipo => {
+        const s = (slaData || []).find(x => x.tipo_id == tipo.id) || {};
+        return `<div class="config-row">
+          <div><div class="config-row-label">${tipo.icone || ''} ${tipo.nome}</div></div>
+          <div class="config-row-actions" style="gap:.4rem">
+            <span style="font-size:.72rem;color:var(--text2)">SLA:</span>
+            <input type="number" class="filter-input" style="width:65px" id="sla-h-${tipo.id}" value="${s.sla_horas || ''}">h
+            <span style="font-size:.72rem;color:var(--text2)">Alerta:</span>
+            <input type="number" class="filter-input" style="width:65px" id="sla-a-${tipo.id}" value="${s.alerta_horas || ''}">h
+            <button class="btn btn-outline btn-sm" onclick="salvarSLA(${tipo.id},${s.id || 0})">Salvar</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+async function salvarSLA(tipoId, slaId) {
+  const h = parseInt(document.getElementById('sla-h-' + tipoId)?.value);
+  const a = parseInt(document.getElementById('sla-a-' + tipoId)?.value);
+  if (!h || !a) { toast('Informe horas do SLA e alerta', 'error'); return; }
+  try {
+    if (slaId) await supaPatch('ops_sla_config', slaId, { sla_horas: h, alerta_horas: a });
+    else await supaPost('ops_sla_config', { tipo_id: tipoId, sla_horas: h, alerta_horas: a, ativo: true });
+    toast('SLA salvo!', 'success');
+  } catch(e) { toast('Erro: ' + e.message, 'error'); }
+}
+
+async function renderConfigTemplates() {
+  document.getElementById('config-content').innerHTML = `
+    <div class="config-card" style="max-width:700px">
+      <h4>📝 Templates de Follow-up</h4>
+      ${_templates.map(t => `
+      <div class="config-row">
+        <div>
+          <div class="config-row-label">${t.titulo}</div>
+          <div class="config-row-sub" style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.texto}</div>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="excluirTemplate(${t.id})">🗑</button>
+      </div>`).join('')}
+      <div style="margin-top:1rem;display:flex;flex-direction:column;gap:.5rem">
+        <div class="field-row">
+          <div><label class="field-label">Título</label>
+            <input type="text" class="field-input" id="new-tpl-titulo" placeholder="Ex: Cobrado transportadora"></div>
+          <div><label class="field-label">Tipo (opcional)</label>
+            <select class="field-select" id="new-tpl-tipo">
+              <option value="">Todos os tipos</option>
+              ${_tipos.map(t => `<option value="${t.id}">${t.nome}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div><label class="field-label">Texto</label>
+          <textarea class="field-textarea" id="new-tpl-texto" placeholder="Texto do template..."></textarea></div>
+        <button class="btn btn-primary btn-sm" style="align-self:flex-start" onclick="adicionarTemplate()">+ Adicionar</button>
+      </div>
+    </div>`;
+}
+
+async function adicionarTemplate() {
+  const titulo  = document.getElementById('new-tpl-titulo').value.trim();
+  const texto   = document.getElementById('new-tpl-texto').value.trim();
+  const tipo_id = parseInt(document.getElementById('new-tpl-tipo').value) || null;
+  if (!titulo || !texto) { toast('Preencha título e texto', 'error'); return; }
+  try {
+    await supaPost('ops_templates_followup', { titulo, texto, tipo_id, ordem: _templates.length + 1 });
+    await carregarLookups();
+    await renderConfigTemplates();
+    toast('Template adicionado!', 'success');
+  } catch(e) { toast('Erro: ' + e.message, 'error'); }
+}
+
+async function excluirTemplate(id) {
+  if (!confirm('Excluir este template?')) return;
+  try {
+    await supaDelete('ops_templates_followup', id);
+    await carregarLookups();
+    await renderConfigTemplates();
+    toast('Template excluído', 'success');
+  } catch(e) { toast('Erro: ' + e.message, 'error'); }
+}
+
+// ============================================================
+// TOAST
+// ============================================================
+function toast(msg, tipo = 'info') {
+  const c = document.getElementById('toast-container');
+  const t = document.createElement('div');
+  t.className = 'toast toast-' + tipo;
+  t.textContent = msg;
+  c.appendChild(t);
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 3000);
+}
+
+// ============================================================
 // INIT
 // ============================================================
 iniciar();
