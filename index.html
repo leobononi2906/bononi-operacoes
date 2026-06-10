@@ -517,6 +517,16 @@ function navegar(pagina) {
 }
 
 // ============================================================
+// DRAWER UTILS
+// ============================================================
+function fecharDrawer(e) {
+  if (e.target === document.getElementById('drawer-overlay')) fecharDrawerDireto();
+}
+function fecharDrawerDireto() {
+  document.getElementById('drawer-overlay').classList.remove('open');
+}
+
+// ============================================================
 // PÁGINA: TICKETS
 // ============================================================
 let ticketsFiltro = { status:'', tipo:'', responsavel:'', busca:'', mostrarConcluidos: false };
