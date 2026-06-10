@@ -152,7 +152,7 @@
   }
   .drawer-overlay.open { display: flex; }
   .drawer {
-    width: 100%; max-width: 560px; background: var(--bg2); border-left: 1px solid var(--border);
+    width: 100%; max-width: 780px; background: var(--bg2); border-left: 1px solid var(--border);
     display: flex; flex-direction: column; overflow: hidden;
   }
   .drawer-header {
@@ -242,6 +242,53 @@
   /* AUDITORIA */
   .divergencia-positiva { color: #f87171; font-weight: 600; }
   .divergencia-negativa { color: #34d399; font-weight: 600; }
+
+
+  /* INLINE STATUS POPUP */
+  .status-popup {
+    position: absolute; background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 8px; z-index: 200; min-width: 180px; padding: 0.4rem 0;
+    box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  }
+  .status-popup-item {
+    padding: 0.5rem 0.9rem; cursor: pointer; font-size: 0.8rem;
+    display: flex; align-items: center; gap: 0.5rem; transition: background 0.1s;
+  }
+  .status-popup-item:hover { background: var(--bg2); }
+  .status-popup-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+  /* QUICK FOLLOW-UP POPUP */
+  .qfw-popup {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 300;
+    display: flex; align-items: center; justify-content: center; padding: 1rem;
+  }
+  .qfw-card {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+    width: 100%; max-width: 480px; padding: 1.4rem;
+  }
+  .qfw-card h4 { font-size: .9rem; font-weight: 600; margin-bottom: 1rem; }
+
+  /* RASTREIO CARD */
+  .rastreio-card {
+    background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+    padding: 0.85rem 1rem; margin-top: 1rem;
+  }
+  .rastreio-status-ok      { color: #34d399; }
+  .rastreio-status-atraso  { color: #f87171; }
+  .rastreio-status-transito{ color: #60a5fa; }
+  .rastreio-status-sem_info{ color: #6b7280; }
+
+  /* DETAIL GRID 2 col no drawer */
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem 1.5rem; margin-bottom: 1rem; }
+  .detail-item .detail-label { font-size: .72rem; color: var(--text2); font-weight: 500; margin-bottom: .2rem; }
+  .detail-item .detail-val   { font-size: .85rem; }
+
+  /* SELECT inline no detalhe */
+  .inline-select {
+    background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); font-size: .82rem; padding: .3rem .6rem; outline: none; cursor: pointer;
+  }
+  .inline-select:focus { border-color: var(--primary); }
 
   /* MOBILE */
   @media (max-width: 768px) {
@@ -615,6 +662,7 @@ function renderListaTickets() {
             ${thSort('responsavel_nome','Resp.')}
             ${thSort('ultimo_followup_em','Último Follow-up')}
             ${thSort('proximo_followup','Próx. Follow-up')}
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -625,7 +673,7 @@ function renderListaTickets() {
             const proxFw = t.proximo_followup
               ? new Date(t.proximo_followup+'T00:00:00').toLocaleDateString('pt-BR') : '—';
             const proxFwVencido = t.proximo_followup && new Date(t.proximo_followup) < new Date();
-            return `<tr class="clickable" onclick="abrirDrawerTicket(${t.id})">
+            return `<tr onclick="abrirDrawerTicket(${t.id})" style="cursor:pointer">
               <td><span style="font-weight:600;color:var(--primary)">${t.numero_ticket||'—'}</span></td>
               <td><span style="color:${t.tipo_cor||'#6b7280'}">${t.tipo_icone||''} ${t.tipo_nome||'—'}</span></td>
               <td>
@@ -633,11 +681,23 @@ function renderListaTickets() {
                 <div style="font-size:.72rem;color:var(--text2)">${t.nf||''}</div>
               </td>
               <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.transportadora_nome||'—'}</td>
-              <td><span class="badge" style="background:${t.status_cor||'#6b7280'}22;color:${t.status_cor||'#9ca3af'}">${t.status_nome||'—'}</span></td>
+              <td onclick="event.stopPropagation()" style="position:relative">
+                <span class="badge" id="status-badge-${t.id}"
+                  style="background:${t.status_cor||'#6b7280'}22;color:${t.status_cor||'#9ca3af'};cursor:pointer"
+                  onclick="abrirStatusPopup(event,${t.id})">
+                  ${t.status_nome||'—'} ▾
+                </span>
+              </td>
               <td><span class="badge sla-${t.sla_status||'sem_sla'}">${slaLabel(t)}</span></td>
               <td style="font-size:.8rem">${t.responsavel_nome||'—'}</td>
               <td style="font-size:.75rem;color:var(--text2)">${ultimoFw}</td>
               <td style="font-size:.78rem;color:${proxFwVencido?'var(--danger)':'var(--text2)'};font-weight:${proxFwVencido?'600':'400'}">${proxFw}</td>
+              <td onclick="event.stopPropagation()">
+                <button class="btn btn-outline btn-sm" style="padding:.25rem .55rem;font-size:.72rem"
+                  onclick="abrirQuickFollowup(${t.id},'${(t.numero_ticket||'').replace(/'/g,'\\'')}','${(t.cliente||'').replace(/'/g,'\\'')}')">
+                  💬 Follow
+                </button>
+              </td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -693,6 +753,9 @@ async function abrirDrawerTicket(id) {
       <div class="followup-texto">${f.texto}</div>
     </div>`).join('') || '<div style="color:var(--text2);font-size:.82rem;padding:.5rem 0">Nenhum follow-up ainda.</div>';
 
+  // Busca rastreio pelo num_nf
+  let rastreioHtml = '<div style="color:var(--text2);font-size:.8rem">Buscando rastreio...</div>';
+  
   document.getElementById('drawer-body').innerHTML = `
     <div class="tabs">
       <button class="tab-btn active" onclick="abaTicket('detalhes',this)">Detalhes</button>
@@ -702,21 +765,49 @@ async function abrirDrawerTicket(id) {
 
     <!-- ABA DETALHES -->
     <div class="tab-panel active" id="tab-detalhes">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:1rem">
-        <div><div class="field-label">Tipo</div><div>${t.tipo_icone||''} ${t.tipo_nome||'—'}</div></div>
-        <div><div class="field-label">Status</div><span class="badge" style="background:${t.status_cor||'#6b7280'}22;color:${t.status_cor||'#9ca3af'}">${t.status_nome||'—'}</span></div>
-        <div><div class="field-label">Responsável</div><div>${t.responsavel_nome||'—'}</div></div>
-        <div><div class="field-label">Prioridade</div><span style="color:${t.prioridade_cor||'#9ca3af'}">${t.prioridade_nome||'—'}</span></div>
-        <div><div class="field-label">Cliente</div><div>${t.cliente||'—'}</div></div>
-        <div><div class="field-label">NF</div><div>${t.nf||'—'}</div></div>
-        <div><div class="field-label">Transportadora</div><div>${t.transportadora_nome||'—'}</div></div>
-        <div><div class="field-label">Rastreio</div><div style="font-family:monospace;font-size:.8rem">${t.codigo_rastreio||'—'}</div></div>
-        <div><div class="field-label">Prev. Entrega</div><div>${t.previsao_entrega?new Date(t.previsao_entrega+'T00:00:00').toLocaleDateString('pt-BR'):'—'}</div></div>
-        <div><div class="field-label">Próx. Follow-up</div><div>${t.proximo_followup?new Date(t.proximo_followup+'T00:00:00').toLocaleDateString('pt-BR'):'—'}</div></div>
+      <!-- Linha 1: Status + Prioridade editáveis inline -->
+      <div style="display:flex;gap:.75rem;align-items:center;margin-bottom:1.25rem;flex-wrap:wrap">
+        <div>
+          <div class="field-label" style="margin-bottom:.3rem">Status</div>
+          <select class="inline-select" id="det-status-${t.id}" onchange="salvarCampoRapido(${t.id},'status_id',this.value)">
+            ${_status.map(s=>`<option value="${s.id}" ${t.status_id==s.id?'selected':''}
+              style="color:${s.cor}">${s.nome}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <div class="field-label" style="margin-bottom:.3rem">Prioridade</div>
+          <select class="inline-select" id="det-prio-${t.id}" onchange="salvarCampoRapido(${t.id},'prioridade_id',this.value)">
+            ${_prioridades.map(p=>`<option value="${p.id}" ${t.prioridade_id==p.id?'selected':''}>${p.nome}</option>`).join('')}
+          </select>
+        </div>
+        <div style="margin-left:auto">
+          <span class="badge sla-${t.sla_status||'sem_sla'}">${slaLabel(t)}</span>
+          ${t.sla_vence_em?`<div style="font-size:.7rem;color:var(--text2);margin-top:.2rem">vence ${new Date(t.sla_vence_em).toLocaleString('pt-BR')}</div>`:''}
+        </div>
       </div>
-      <div class="field-label">SLA</div>
-      <div style="margin-bottom:1rem"><span class="badge sla-${t.sla_status||'sem_sla'}">${slaLabel(t)}</span>${t.sla_vence_em?` <span style="font-size:.75rem;color:var(--text2)"> vence ${new Date(t.sla_vence_em).toLocaleString('pt-BR')}</span>`:''}</div>
-      ${t.observacao?`<div class="field-label">Observação</div><div style="font-size:.83rem;color:var(--text2)">${t.observacao}</div>`:''}
+
+      <!-- Grid detalhes -->
+      <div class="detail-grid">
+        <div class="detail-item"><div class="detail-label">Tipo</div><div class="detail-val">${t.tipo_icone||''} ${t.tipo_nome||'—'}</div></div>
+        <div class="detail-item"><div class="detail-label">Responsável</div><div class="detail-val">${t.responsavel_nome||'—'}</div></div>
+        <div class="detail-item"><div class="detail-label">Cliente</div><div class="detail-val" style="font-weight:500">${t.cliente||'—'}</div></div>
+        <div class="detail-item"><div class="detail-label">NF</div><div class="detail-val" style="font-family:monospace">${t.nf||'—'}</div></div>
+        <div class="detail-item"><div class="detail-label">Transportadora</div><div class="detail-val">${t.transportadora_nome||'—'}</div></div>
+        <div class="detail-item"><div class="detail-label">Rastreio</div><div class="detail-val" style="font-family:monospace;font-size:.8rem">${t.codigo_rastreio||'—'}</div></div>
+        <div class="detail-item"><div class="detail-label">Prev. Entrega</div><div class="detail-val">${t.previsao_entrega?new Date(t.previsao_entrega+'T00:00:00').toLocaleDateString('pt-BR'):'—'}</div></div>
+        <div class="detail-item">
+          <div class="detail-label">Próx. Follow-up</div>
+          <input type="date" class="inline-select" value="${t.proximo_followup||''}"
+            onchange="salvarCampoRapido(${t.id},'proximo_followup',this.value||null)"
+            style="width:auto">
+        </div>
+      </div>
+
+      ${t.observacao?`<div class="field-label">Observação</div><div style="font-size:.83rem;color:var(--text2);margin-bottom:1rem">${t.observacao}</div>`:''}
+
+      <!-- Rastreio automático -->
+      <div class="field-label" style="margin-bottom:.4rem">🛰 Último Rastreio (sistema)</div>
+      <div id="rastreio-box-${t.id}">${rastreioHtml}</div>
     </div>
 
     <!-- ABA FOLLOW-UP -->
@@ -773,6 +864,14 @@ async function abrirDrawerTicket(id) {
 
   document.getElementById('drawer-footer').innerHTML =
     `<button class="btn btn-outline btn-sm" onclick="fecharDrawerDireto()">Fechar</button>`;
+
+  // Busca rastreio em background pelo num_nf do ticket
+  if (t.nf) {
+    buscarRastreioTicket(t.id, t.nf);
+  } else {
+    document.getElementById('rastreio-box-' + t.id).innerHTML =
+      '<div style="color:var(--text2);font-size:.8rem">NF não informada — rastreio indisponível.</div>';
+  }
 }
 
 function abaTicket(aba, btn) {
@@ -822,6 +921,77 @@ async function salvarEdicaoTicket(id) {
     abrirDrawerTicket(id);
     await renderTickets();
   } catch(e) { toast('Erro: '+e.message,'error'); }
+}
+
+// ============================================================
+// RASTREIO AUTOMÁTICO
+// ============================================================
+async function buscarRastreioTicket(ticketId, nf) {
+  const box = document.getElementById('rastreio-box-' + ticketId);
+  if (!box) return;
+  try {
+    const dados = await supa('frt_rastreio',
+      `num_nf=eq.${encodeURIComponent(nf)}&order=atualizado_em.desc&limit=1`);
+    const r = dados?.[0];
+    if (!r) {
+      box.innerHTML = '<div class="rastreio-card"><span style="color:var(--text2);font-size:.8rem">Nenhum rastreio encontrado para NF ' + nf + '</span></div>';
+      return;
+    }
+    const statusCls = r.status === 'entregue' ? 'rastreio-status-ok'
+      : r.status === 'em_transito' ? 'rastreio-status-transito'
+      : r.status === 'sem_info'    ? 'rastreio-status-sem_info'
+      : 'rastreio-status-atraso';
+    const statusLabel = {
+      entregue: '✅ Entregue', em_transito: '🚚 Em trânsito',
+      sem_info: '❓ Sem informação', atrasado: '⚠️ Atrasado'
+    }[r.status] || r.status;
+    const atualizado = r.atualizado_em
+      ? new Date(r.atualizado_em).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
+      : '—';
+    const previsao = r.data_previsao
+      ? new Date(r.data_previsao + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
+    const entregue = r.data_entrega
+      ? new Date(r.data_entrega + 'T00:00:00').toLocaleDateString('pt-BR') : null;
+    box.innerHTML = `
+      <div class="rastreio-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem">
+          <span class="${statusCls}" style="font-weight:600;font-size:.85rem">${statusLabel}</span>
+          <span style="font-size:.7rem;color:var(--text2)">atualizado ${atualizado}</span>
+        </div>
+        ${r.ultima_ocorrencia || r.ultimo_evento
+          ? `<div style="font-size:.82rem;margin-bottom:.4rem">${r.ultima_ocorrencia || r.ultimo_evento}</div>` : ''}
+        <div style="display:flex;gap:1.5rem;font-size:.75rem;color:var(--text2)">
+          <span>Prev. entrega: <strong style="color:var(--text)">${previsao}</strong></span>
+          ${entregue ? `<span>Entregue em: <strong style="color:#34d399">${entregue}</strong></span>` : ''}
+          <span>${r.nome_transportadora||''}</span>
+        </div>
+      </div>`;
+  } catch(e) {
+    box.innerHTML = '<div class="rastreio-card" style="color:var(--text2);font-size:.8rem">Erro ao buscar rastreio.</div>';
+  }
+}
+
+// Salva campo individual do ticket sem abrir edição completa
+async function salvarCampoRapido(ticketId, campo, valor) {
+  try {
+    const body = {};
+    body[campo] = valor ? (campo.endsWith('_id') ? parseInt(valor) : valor) : null;
+    await supaPatch('ops_tickets', ticketId, body);
+    // Atualiza cache local
+    const t = todosTickets.find(x => x.id === ticketId);
+    if (t) {
+      t[campo] = body[campo];
+      if (campo === 'status_id') {
+        const s = _status.find(s => s.id == valor);
+        if (s) { t.status_nome = s.nome; t.status_cor = s.cor; }
+      }
+      if (campo === 'prioridade_id') {
+        const p = _prioridades.find(p => p.id == valor);
+        if (p) { t.prioridade_nome = p.nome; t.prioridade_cor = p.cor; }
+      }
+    }
+    toast('Salvo!', 'success');
+  } catch(e) { toast('Erro: ' + e.message, 'error'); }
 }
 
 // ============================================================
@@ -1395,6 +1565,107 @@ function abrirTicketDeAtraso(d) {
     document.getElementById('nt-origem').value    = 'frt_conhecimentos';
     document.getElementById('nt-origem-id').value = d.id_doc||'';
   }, 100);
+}
+
+// ============================================================
+// STATUS POPUP INLINE
+// ============================================================
+let _statusPopupAberto = null;
+
+function abrirStatusPopup(e, ticketId) {
+  fecharStatusPopup();
+  const badge = e.currentTarget;
+  const rect  = badge.getBoundingClientRect();
+  const popup = document.createElement('div');
+  popup.className = 'status-popup';
+  popup.id = 'status-popup-' + ticketId;
+  popup.style.cssText = `top:${rect.bottom + window.scrollY + 4}px;left:${rect.left + window.scrollX}px;`;
+  popup.innerHTML = _status.map(s => `
+    <div class="status-popup-item" onclick="alterarStatusInline(${ticketId},${s.id},'${s.nome.replace(/'/g,"\'")}','${s.cor}')">
+      <span class="status-popup-dot" style="background:${s.cor}"></span>
+      ${s.nome}
+    </div>`).join('');
+  document.body.appendChild(popup);
+  _statusPopupAberto = popup;
+  setTimeout(() => document.addEventListener('click', fecharStatusPopup, {once:true}), 10);
+}
+
+function fecharStatusPopup() {
+  if (_statusPopupAberto) { _statusPopupAberto.remove(); _statusPopupAberto = null; }
+}
+
+async function alterarStatusInline(ticketId, statusId, statusNome, statusCor) {
+  fecharStatusPopup();
+  try {
+    await supaPatch('ops_tickets', ticketId, { status_id: statusId });
+    // Atualiza local sem recarregar tudo
+    const t = todosTickets.find(x => x.id === ticketId);
+    if (t) { t.status_id = statusId; t.status_nome = statusNome; t.status_cor = statusCor; }
+    renderListaTickets();
+    toast('Status atualizado!', 'success');
+  } catch(e) { toast('Erro: ' + e.message, 'error'); }
+}
+
+// ============================================================
+// QUICK FOLLOW-UP POPUP
+// ============================================================
+function abrirQuickFollowup(ticketId, numero, cliente) {
+  fecharQuickFollowup();
+  const optTipoFw = ['interno','cobranca_transp','contato_cliente','resolucao']
+    .map(x => `<option value="${x}">${x.replace(/_/g,' ')}</option>`).join('');
+  const tplHtml = _templates.slice(0,6).map(tp =>
+    `<span class="template-pill" onclick="document.getElementById('qfw-texto').value='${tp.texto.replace(/'/g,"\'").replace(/
+/g,' ')}'">
+      ${tp.titulo}
+    </span>`).join('');
+
+  const popup = document.createElement('div');
+  popup.className = 'qfw-popup';
+  popup.id = 'qfw-popup';
+  popup.onclick = e => { if(e.target===popup) fecharQuickFollowup(); };
+  popup.innerHTML = `
+    <div class="qfw-card">
+      <h4>💬 Follow-up — ${numero} · ${cliente}</h4>
+      <div class="templates-row" style="margin-bottom:.75rem">${tplHtml}</div>
+      <div style="margin-bottom:.75rem">
+        <label class="field-label">Tipo</label>
+        <select class="field-select" id="qfw-tipo">${optTipoFw}</select>
+      </div>
+      <div style="margin-bottom:.75rem">
+        <label class="field-label">Texto *</label>
+        <textarea class="field-textarea" id="qfw-texto" placeholder="Descreva o acompanhamento..." style="min-height:90px"></textarea>
+      </div>
+      <div style="margin-bottom:1rem">
+        <label class="field-label">Próximo follow-up</label>
+        <input type="date" class="field-input" id="qfw-proximo">
+      </div>
+      <div style="display:flex;gap:.5rem;justify-content:flex-end">
+        <button class="btn btn-outline btn-sm" onclick="fecharQuickFollowup()">Cancelar</button>
+        <button class="btn btn-primary btn-sm" onclick="salvarQuickFollowup(${ticketId})">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(popup);
+}
+
+function fecharQuickFollowup() {
+  document.getElementById('qfw-popup')?.remove();
+}
+
+async function salvarQuickFollowup(ticketId) {
+  const texto = document.getElementById('qfw-texto').value.trim();
+  const tipo  = document.getElementById('qfw-tipo').value;
+  const prox  = document.getElementById('qfw-proximo').value;
+  if (!texto) { toast('Digite o texto do follow-up','error'); return; }
+  try {
+    await supaPost('ops_followups', { ticket_id:ticketId, tipo, texto, responsavel_nome:currentUser.nome });
+    if (prox) await supaPatch('ops_tickets', ticketId, { proximo_followup: prox });
+    fecharQuickFollowup();
+    toast('Follow-up salvo!','success');
+    // Atualiza ultimo_followup_em local
+    const t = todosTickets.find(x=>x.id===ticketId);
+    if (t) { t.ultimo_followup_em = new Date().toISOString(); t.qtd_followups = (t.qtd_followups||0)+1; if(prox) t.proximo_followup = prox; }
+    renderListaTickets();
+  } catch(e) { toast('Erro: '+e.message,'error'); }
 }
 
 // ============================================================
