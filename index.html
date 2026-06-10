@@ -694,7 +694,7 @@ function renderListaTickets() {
               <td style="font-size:.78rem;color:${proxFwVencido?'var(--danger)':'var(--text2)'};font-weight:${proxFwVencido?'600':'400'}">${proxFw}</td>
               <td onclick="event.stopPropagation()">
                 <button class="btn btn-outline btn-sm" style="padding:.25rem .55rem;font-size:.72rem"
-                  onclick="abrirQuickFollowup(${t.id},'${(t.numero_ticket||'').replace(/'/g,'\\'')}','${(t.cliente||'').replace(/'/g,'\\'')}')">
+                  onclick="abrirQuickFollowup(${t.id})">
                   💬 Follow
                 </button>
               </td>
@@ -1154,7 +1154,11 @@ function filtrarAuditoria(q) {
   document.getElementById('tbody-auditoria').innerHTML = renderLinhasAuditoria(dados);
 }
 
-function abrirTicketDeAuditoria(d) {
+function abrirTicketDeAuditoria(idOuObj) {
+  var d = typeof idOuObj === 'number'
+    ? (window._dadosAuditoria || []).find(function(x){return x.id == idOuObj;})
+    : idOuObj;
+  if (!d) return;
   // Pré-preenche novo ticket com dados da divergência
   abrirNovoTicket();
   setTimeout(()=>{
@@ -1581,7 +1585,7 @@ function abrirStatusPopup(e, ticketId) {
   popup.id = 'status-popup-' + ticketId;
   popup.style.cssText = `top:${rect.bottom + window.scrollY + 4}px;left:${rect.left + window.scrollX}px;`;
   popup.innerHTML = _status.map(s => `
-    <div class="status-popup-item" onclick="alterarStatusInline(${ticketId},${s.id},'${s.nome.replace(/'/g,"\'")}','${s.cor}')">
+    <div class="status-popup-item" onclick="alterarStatusInline(${ticketId},${s.id},${i})"\'")}','${s.cor}')">
       <span class="status-popup-dot" style="background:${s.cor}"></span>
       ${s.nome}
     </div>`).join('');
@@ -1594,7 +1598,10 @@ function fecharStatusPopup() {
   if (_statusPopupAberto) { _statusPopupAberto.remove(); _statusPopupAberto = null; }
 }
 
-async function alterarStatusInline(ticketId, statusId, statusNome, statusCor) {
+async function alterarStatusInline(ticketId, statusId, statusIdx) {
+  const s = _status[statusIdx] || _status.find(x=>x.id==statusId) || {};
+  const statusNome = s.nome || '';
+  const statusCor  = s.cor  || '#6b7280';
   fecharStatusPopup();
   try {
     await supaPatch('ops_tickets', ticketId, { status_id: statusId });
@@ -1609,15 +1616,17 @@ async function alterarStatusInline(ticketId, statusId, statusNome, statusCor) {
 // ============================================================
 // QUICK FOLLOW-UP POPUP
 // ============================================================
-function abrirQuickFollowup(ticketId, numero, cliente) {
+function abrirQuickFollowup(ticketId) {
+  const tk = todosTickets.find(x => x.id === ticketId) || {};
+  const numero  = tk.numero_ticket || ('ID ' + ticketId);
+  const cliente = tk.cliente || '';
   fecharQuickFollowup();
   const optTipoFw = ['interno','cobranca_transp','contato_cliente','resolucao']
     .map(x => `<option value="${x}">${x.replace(/_/g,' ')}</option>`).join('');
-  const tplHtml = _templates.slice(0,6).map(tp =>
-    `<span class="template-pill" onclick="document.getElementById('qfw-texto').value='${tp.texto.replace(/'/g,"\'").replace(/
-/g,' ')}'">
-      ${tp.titulo}
-    </span>`).join('');
+  const tplHtml = _templates.slice(0,6).map((tp,i) =>
+    `<span class="template-pill" onclick="usarQfwTemplate(${i})">${tp.titulo}</span>`
+  ).join('');
+  window._qfwTemplates = _templates.slice(0,6);
 
   const popup = document.createElement('div');
   popup.className = 'qfw-popup';
@@ -1645,6 +1654,16 @@ function abrirQuickFollowup(ticketId, numero, cliente) {
       </div>
     </div>`;
   document.body.appendChild(popup);
+}
+
+function usarQfwTemplate(i) {
+  var tp = (window._qfwTemplates || [])[i];
+  if (tp) document.getElementById('qfw-texto').value = tp.texto.split('\n').join(' ');
+}
+
+function abrirTicketDeAtraso_id(idDoc) {
+  var d = (window._dadosAtrasos || []).find(function(x){return x.id_doc == idDoc;});
+  if (d) abrirTicketDeAtraso(d);
 }
 
 function fecharQuickFollowup() {
